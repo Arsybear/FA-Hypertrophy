@@ -658,6 +658,25 @@ function handleSettingsAction(action, btn, view) {
   renderCurrentView();
 }
 
+// A <input type=date> value is a real calendar date, so its day-of-week
+// select must match it — otherwise the user could pick e.g. a Wednesday
+// date but leave "Start day of week" on Monday. Parsed as a local date
+// (not via `new Date(str)`, which reads YYYY-MM-DD as UTC and can land on
+// the wrong day depending on timezone).
+function weekdayFromDateInputValue(value) {
+  if (!value) return null;
+  const [y, m, d] = value.split("-").map(Number);
+  return jsDateToWeekdayIndex(new Date(y, m - 1, d));
+}
+
+function syncStartDaySelect(dateInput, selectDataRole) {
+  const weekday = weekdayFromDateInputValue(dateInput.value);
+  if (weekday == null) return null;
+  const select = document.querySelector(`select[data-role="${selectDataRole}"]`);
+  if (select) select.value = weekday;
+  return weekday;
+}
+
 function handleSettingsChange(target) {
   const mapping = MESO_EDIT_FIELD_MAP[target.dataset.role];
   if (!mapping) return;
@@ -665,6 +684,10 @@ function handleSettingsChange(target) {
   if (!active) return;
   const [field, parse] = mapping;
   Store.updateMesocycle(active.id, { [field]: parse(target.value) });
+  if (target.dataset.role === "edit-start-date") {
+    const weekday = syncStartDaySelect(target, "edit-start-day");
+    if (weekday != null) Store.updateMesocycle(active.id, { startDayOfWeek: weekday });
+  }
   // No renderCurrentView(): avoid stealing focus mid-edit (see
   // handleTodayChange). Patch the mesocycle-list summary line in place so
   // it still reflects the edit.
@@ -695,6 +718,7 @@ function handleGlobalChange(e) {
   const route = currentRoute();
   if (route === "today" && t.matches("input[data-field]")) handleTodayChange(t);
   else if (route === "program" && t.matches('input[data-role^="slot-"]')) handleProgramChange(t);
+  else if (route === "settings" && t.dataset.role === "new-meso-start-date") syncStartDaySelect(t, "new-meso-start-day");
   else if (route === "settings" && t.matches('[data-role^="edit-"]')) handleSettingsChange(t);
 }
 
