@@ -30,11 +30,11 @@ const Store = {
   getExercises() {
     return readJSON(KEYS.exercises, []);
   },
-  addExercise(name) {
+  addExercise(name, muscleGroup) {
     const exercises = Store.getExercises();
     const existing = exercises.find((e) => e.name.toLowerCase() === name.toLowerCase());
     if (existing) return existing;
-    const ex = { id: uid(), name };
+    const ex = { id: uid(), name, muscleGroup: muscleGroup || "Other" };
     exercises.push(ex);
     writeJSON(KEYS.exercises, exercises);
     return ex;

@@ -1,5 +1,10 @@
 const App = { ui: {} };
 
+const MUSCLE_GROUPS = [
+  "Chest", "Back", "Shoulders", "Biceps", "Triceps",
+  "Quads", "Hamstrings", "Glutes", "Calves", "Abs", "Other",
+];
+
 function escapeHtml(str) {
   return String(str ?? "").replace(/[&<>"']/g, (c) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -12,6 +17,30 @@ function fmtNum(n) {
 
 function cssEscape(s) {
   return String(s).replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
+}
+
+function getExerciseMuscleGroup(exerciseId) {
+  const exercise = Store.getExercises().find((e) => e.id === exerciseId);
+  return (exercise && exercise.muscleGroup) || "Other";
+}
+
+function renderExerciseOptionsGrouped(excludeId) {
+  const library = Store.getExercises().filter((e) => e.id !== excludeId);
+  const byGroup = {};
+  for (const ex of library) {
+    const group = ex.muscleGroup || "Other";
+    (byGroup[group] = byGroup[group] || []).push(ex);
+  }
+  return Object.keys(byGroup).sort().map((group) => `
+    <optgroup label="${escapeHtml(group)}">
+      ${byGroup[group].map((e) => `<option value="${e.id}">${escapeHtml(e.name)}</option>`).join("")}
+    </optgroup>`).join("");
+}
+
+function renderMuscleGroupSelect(dataRole, dataAttrs = "") {
+  return `<select data-role="${dataRole}" ${dataAttrs}>
+    ${MUSCLE_GROUPS.map((g) => `<option value="${g}">${g}</option>`).join("")}
+  </select>`;
 }
 
 function currentRoute() {
@@ -133,7 +162,10 @@ function renderExerciseBlock(workout, ex) {
           <button data-action="move-up" data-slot="${ex.slotId}" ${workout.finished ? "disabled" : ""}>▲</button>
           <button data-action="move-down" data-slot="${ex.slotId}" ${workout.finished ? "disabled" : ""}>▼</button>
         </div>
-        <strong class="ex-name">${escapeHtml(ex.exerciseName)}</strong>
+        <div class="ex-name-group">
+          <span class="muscle-tag">${escapeHtml(getExerciseMuscleGroup(ex.exerciseId))}</span>
+          <strong class="ex-name">${escapeHtml(ex.exerciseName)}</strong>
+        </div>
         <span class="rep-range muted">${ex.repRangeMin}-${ex.repRangeMax} reps</span>
       </div>
       <div class="exercise-actions">
@@ -188,14 +220,14 @@ function renderRemoveForm(ex) {
 }
 
 function renderSubstituteForm(ex) {
-  const library = Store.getExercises().filter((e) => e.id !== ex.exerciseId);
   return `<div class="inline-form" data-slot="${ex.slotId}">
     <p>Swap ${escapeHtml(ex.exerciseName)} for:</p>
     <select data-role="sub-exercise-select" data-slot="${ex.slotId}">
       <option value="">-- choose existing --</option>
-      ${library.map((e) => `<option value="${e.id}">${escapeHtml(e.name)}</option>`).join("")}
+      ${renderExerciseOptionsGrouped(ex.exerciseId)}
     </select>
     <input type="text" data-role="sub-new-name" data-slot="${ex.slotId}" placeholder="or create new exercise">
+    ${renderMuscleGroupSelect("sub-new-group", `data-slot="${ex.slotId}"`)}
     <label><input type="radio" name="sub-scope-${ex.slotId}" value="workout" checked> This workout only</label>
     <label><input type="radio" name="sub-scope-${ex.slotId}" value="future"> All future workouts of this day</label>
     <div class="form-actions">
@@ -206,19 +238,19 @@ function renderSubstituteForm(ex) {
 }
 
 function renderAddExerciseForm() {
-  const library = Store.getExercises();
   return `<div class="inline-form">
     <p>Add exercise:</p>
     <select data-role="add-exercise-select">
       <option value="">-- choose existing --</option>
-      ${library.map((e) => `<option value="${e.id}">${escapeHtml(e.name)}</option>`).join("")}
+      ${renderExerciseOptionsGrouped(null)}
     </select>
     <input type="text" data-role="add-new-name" placeholder="or create new exercise">
+    ${renderMuscleGroupSelect("add-new-group")}
     <div class="form-row">
       <label>Sets <input type="number" data-role="add-sets" value="3" min="1"></label>
       <label>Rep min <input type="number" data-role="add-rep-min" value="8" min="1"></label>
       <label>Rep max <input type="number" data-role="add-rep-max" value="12" min="1"></label>
-      <label>+kg <input type="number" step="0.5" data-role="add-increment" value="2.5"></label>
+      <label>+lb <input type="number" step="2.5" data-role="add-increment" value="5"></label>
     </div>
     <label><input type="radio" name="add-scope" value="workout" checked> This workout only</label>
     <label><input type="radio" name="add-scope" value="future"> All future workouts of this day</label>
@@ -263,8 +295,9 @@ function handleTodayAction(action, btn, view) {
   } else if (action === "confirm-substitute") {
     const select = view.querySelector(`select[data-role="sub-exercise-select"][data-slot="${cssEscape(slotId)}"]`);
     const newName = view.querySelector(`input[data-role="sub-new-name"][data-slot="${cssEscape(slotId)}"]`).value.trim();
+    const newGroup = view.querySelector(`select[data-role="sub-new-group"][data-slot="${cssEscape(slotId)}"]`).value;
     const scope = view.querySelector(`input[name="sub-scope-${cssEscape(slotId)}"]:checked`).value;
-    const exercise = newName ? Store.addExercise(newName) : Store.getExercises().find((x) => x.id === select.value);
+    const exercise = newName ? Store.addExercise(newName, newGroup) : Store.getExercises().find((x) => x.id === select.value);
     if (exercise) {
       const ex = workout.exercises.find((x) => x.slotId === slotId);
       ex.exerciseId = exercise.id;
@@ -280,12 +313,13 @@ function handleTodayAction(action, btn, view) {
   } else if (action === "confirm-add-exercise") {
     const select = view.querySelector('select[data-role="add-exercise-select"]');
     const newName = view.querySelector('input[data-role="add-new-name"]').value.trim();
+    const newGroup = view.querySelector('select[data-role="add-new-group"]').value;
     const targetSets = Number(view.querySelector('input[data-role="add-sets"]').value) || 1;
     const repRangeMin = Number(view.querySelector('input[data-role="add-rep-min"]').value) || 1;
     const repRangeMax = Number(view.querySelector('input[data-role="add-rep-max"]').value) || repRangeMin;
     const weightIncrement = Number(view.querySelector('input[data-role="add-increment"]').value) || 0;
     const scope = view.querySelector('input[name="add-scope"]:checked').value;
-    const exercise = newName ? Store.addExercise(newName) : Store.getExercises().find((x) => x.id === select.value);
+    const exercise = newName ? Store.addExercise(newName, newGroup) : Store.getExercises().find((x) => x.id === select.value);
     if (exercise) {
       let newSlotId;
       if (scope === "future") {
@@ -324,6 +358,25 @@ function handleTodayChange(target) {
   set[field] = Number.isNaN(num) ? null : num;
   set.isLogged = true;
   set.prefilled = false;
+
+  // Once a weight is entered, carry it into any other set of this exercise
+  // the user hasn't touched yet (still prefilled/blank) — same weight across
+  // all sets is the common case, and it's still freely editable per set.
+  if (field === "weight" && num != null) {
+    ex.sets.forEach((s, i) => {
+      if (i === setIndex || s.isLogged) return;
+      s.weight = num;
+      s.prefilled = false;
+      const otherInput = document.querySelector(
+        `input[data-field="weight"][data-slot="${cssEscape(slotId)}"][data-set="${i}"]`
+      );
+      if (otherInput) {
+        otherInput.value = num;
+        otherInput.classList.remove("prefilled");
+      }
+    });
+  }
+
   Store.updateWorkout(workout.id, { exercises: workout.exercises });
   // No renderCurrentView() here: a full re-render would replace the input
   // DOM nodes out from under the user's next click/tab while filling in a
@@ -377,7 +430,7 @@ function renderDayCard(meso, day, idx) {
           : `<button data-action="open-remove-day" data-day="${day.id}">Remove Day</button>`}
       </div>
       <table class="slots">
-        <thead><tr><th>Exercise</th><th>Sets</th><th>Reps</th><th>+kg</th><th></th></tr></thead>
+        <thead><tr><th>Exercise</th><th>Sets</th><th>Reps</th><th>+lb</th><th></th></tr></thead>
         <tbody>
           ${sortedExercises.map((slot) => renderSlotRow(day, slot)).join("")}
         </tbody>
@@ -392,7 +445,10 @@ function renderDayCard(meso, day, idx) {
 function renderSlotRow(day, slot) {
   const exercise = Store.getExercises().find((e) => e.id === slot.exerciseId);
   return `<tr data-slot="${slot.id}" data-day="${day.id}">
-    <td>${escapeHtml(exercise ? exercise.name : "(unknown)")}</td>
+    <td>
+      <span class="muscle-tag">${escapeHtml((exercise && exercise.muscleGroup) || "Other")}</span>
+      <div>${escapeHtml(exercise ? exercise.name : "(unknown)")}</div>
+    </td>
     <td><input type="number" min="1" value="${slot.targetSets}" data-role="slot-sets" data-day="${day.id}" data-slot="${slot.id}"></td>
     <td>
       <input type="number" min="1" value="${slot.repRangeMin}" class="rep-input" data-role="slot-rep-min" data-day="${day.id}" data-slot="${slot.id}">-
@@ -408,18 +464,18 @@ function renderSlotRow(day, slot) {
 }
 
 function renderAddSlotForm(day) {
-  const library = Store.getExercises();
   return `<div class="inline-form" data-day="${day.id}">
     <select data-role="new-slot-exercise" data-day="${day.id}">
       <option value="">-- choose existing --</option>
-      ${library.map((e) => `<option value="${e.id}">${escapeHtml(e.name)}</option>`).join("")}
+      ${renderExerciseOptionsGrouped(null)}
     </select>
     <input type="text" data-role="new-slot-name" data-day="${day.id}" placeholder="or create new exercise">
+    ${renderMuscleGroupSelect("new-slot-group", `data-day="${day.id}"`)}
     <div class="form-row">
       <label>Sets <input type="number" data-role="new-slot-sets" data-day="${day.id}" value="3" min="1"></label>
       <label>Rep min <input type="number" data-role="new-slot-rep-min" data-day="${day.id}" value="8" min="1"></label>
       <label>Rep max <input type="number" data-role="new-slot-rep-max" data-day="${day.id}" value="12" min="1"></label>
-      <label>+kg <input type="number" step="0.5" data-role="new-slot-increment" data-day="${day.id}" value="2.5"></label>
+      <label>+lb <input type="number" step="2.5" data-role="new-slot-increment" data-day="${day.id}" value="5"></label>
     </div>
     <div class="form-actions">
       <button data-action="confirm-add-slot" data-day="${day.id}">Add</button>
@@ -451,11 +507,12 @@ function handleProgramAction(action, btn, view) {
   } else if (action === "confirm-add-slot") {
     const select = view.querySelector(`select[data-role="new-slot-exercise"][data-day="${cssEscape(dayId)}"]`);
     const newName = view.querySelector(`input[data-role="new-slot-name"][data-day="${cssEscape(dayId)}"]`).value.trim();
+    const newGroup = view.querySelector(`select[data-role="new-slot-group"][data-day="${cssEscape(dayId)}"]`).value;
     const targetSets = Number(view.querySelector(`input[data-role="new-slot-sets"][data-day="${cssEscape(dayId)}"]`).value) || 1;
     const repRangeMin = Number(view.querySelector(`input[data-role="new-slot-rep-min"][data-day="${cssEscape(dayId)}"]`).value) || 1;
     const repRangeMax = Number(view.querySelector(`input[data-role="new-slot-rep-max"][data-day="${cssEscape(dayId)}"]`).value) || repRangeMin;
     const weightIncrement = Number(view.querySelector(`input[data-role="new-slot-increment"][data-day="${cssEscape(dayId)}"]`).value) || 0;
-    const exercise = newName ? Store.addExercise(newName) : Store.getExercises().find((x) => x.id === select.value);
+    const exercise = newName ? Store.addExercise(newName, newGroup) : Store.getExercises().find((x) => x.id === select.value);
     if (exercise) {
       Store.addExerciseSlot(meso.id, dayId, { exerciseId: exercise.id, targetSets, repRangeMin, repRangeMax, weightIncrement });
     }
@@ -512,7 +569,7 @@ function renderHistory(container) {
         ${open ? `<div class="history-detail">
           ${[...w.exercises].sort((a, b) => a.order - b.order).map((ex) => `
             <div class="history-exercise">
-              <strong>${escapeHtml(ex.exerciseName)}</strong>
+              <span><span class="muscle-tag">${escapeHtml(getExerciseMuscleGroup(ex.exerciseId))}</span> <strong>${escapeHtml(ex.exerciseName)}</strong></span>
               <span>${ex.sets.map((s) => s.weight != null ? `${s.weight}×${s.reps}` : "—").join(", ")}</span>
             </div>`).join("")}
         </div>` : ""}

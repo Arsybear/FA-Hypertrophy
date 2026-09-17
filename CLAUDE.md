@@ -52,7 +52,13 @@ Each file defines top-level functions/objects in the shared global scope
 Three `localStorage` keys, all accessed through the `Store` object (never
 touch `localStorage` directly elsewhere):
 
-- `fah_exercises` — flat array, the global reusable exercise library.
+- `fah_exercises` — flat array, the global reusable exercise library. Each
+  entry is `{id, name, muscleGroup}`; `muscleGroup` is one of the fixed
+  `MUSCLE_GROUPS` options in `js/app.js` (defaults to `"Other"` for entries
+  created before this field existed). Set once at creation via
+  `Store.addExercise(name, muscleGroup)` — there's no separate edit flow for
+  it. Weight units are pounds throughout the UI (`+lb` labels, 5lb default
+  increment); nothing in the data model is unit-typed, it's just a number.
 - `fah_mesocycles` — array of every mesocycle ever created. Exactly one has
   `active: true` at a time; `Store.getActiveMesocycle()` is the source of
   truth for what `#/today` and `#/program` operate on. Each mesocycle owns
@@ -85,6 +91,14 @@ back to `exerciseId`, e.g. after a one-off substitution) and applies double
 progression (`nextSet` in `js/progression.js`): hit the top of the rep range
 → bump weight & reset to the bottom; otherwise +1 rep at the same weight. No
 prior history → blank/unprefilled (manual baseline).
+
+Separately, `handleTodayChange` in `js/app.js` also carries a just-entered
+**weight** into every other not-yet-logged set of the same exercise (same
+weight across all sets is the common case) — both in the data model and by
+writing directly into those other `<input>` elements, since this handler
+intentionally avoids `renderCurrentView()` (see below). A set that the user
+has already touched (`isLogged: true`) is left alone, so per-set overrides
+(e.g. a drop set) still stick.
 
 ### Edit scope: "this workout only" vs "all future"
 
