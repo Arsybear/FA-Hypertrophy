@@ -394,7 +394,7 @@ function renderProgram(container) {
 
   container.innerHTML = `
     <h2>${escapeHtml(meso.name)}</h2>
-    <p class="muted">Start day: ${WEEKDAY_LABELS[meso.startDayOfWeek]}</p>
+    <p class="muted">Start day: ${WEEKDAY_LABELS[mesocycleStartWeekday(meso)]} (${meso.startDate})</p>
     ${sortedDays.map((day, idx) => renderDayCard(meso, day, idx)).join("")}
     <div class="add-exercise-area">
       ${App.ui.addDayOpen
@@ -411,7 +411,7 @@ function renderProgram(container) {
 }
 
 function renderDayCard(meso, day, idx) {
-  const weekday = WEEKDAY_LABELS[(meso.startDayOfWeek + idx) % 7];
+  const weekday = WEEKDAY_LABELS[(mesocycleStartWeekday(meso) + idx) % 7];
   const sortedExercises = [...day.exercises].sort((a, b) => a.order - b.order);
   const removeConfirm = App.ui.removeDayConfirm === day.id;
   const addExOpen = App.ui.addExerciseToDay === day.id;
@@ -613,11 +613,7 @@ function renderSettings(container) {
         <label>Name <input type="text" data-role="edit-name" value="${escapeHtml(active.name)}"></label>
         <label>Weeks <input type="number" min="1" data-role="edit-weeks" value="${active.numWeeks}"></label>
         <label>Start date <input type="date" data-role="edit-start-date" value="${active.startDate}"></label>
-        <label>Start day of week
-          <select data-role="edit-start-day">
-            ${WEEKDAY_LABELS.map((label, i) => `<option value="${i}" ${active.startDayOfWeek === i ? "selected" : ""}>${label}</option>`).join("")}
-          </select>
-        </label>
+        <p class="muted">Falls on a <span data-role="edit-start-weekday-hint">${WEEKDAY_LABELS[mesocycleStartWeekday(active)]}</span> — day 1 of the program always starts there.</p>
       </div>
     ` : ""}
 
@@ -626,11 +622,7 @@ function renderSettings(container) {
       <label>Name <input type="text" data-role="new-meso-name" placeholder="e.g. Meso 1"></label>
       <label>Weeks <input type="number" min="1" value="6" data-role="new-meso-weeks"></label>
       <label>Start date <input type="date" data-role="new-meso-start-date" value="${isoDate(new Date())}"></label>
-      <label>Start day of week
-        <select data-role="new-meso-start-day">
-          ${WEEKDAY_LABELS.map((label, i) => `<option value="${i}" ${jsDateToWeekdayIndex(new Date()) === i ? "selected" : ""}>${label}</option>`).join("")}
-        </select>
-      </label>
+      <p class="muted">Falls on a <span data-role="new-meso-start-weekday-hint">${WEEKDAY_LABELS[jsDateToWeekdayIndex(new Date())]}</span> — day 1 of the program always starts there.</p>
       <button class="btn primary" data-action="create-meso">Create</button>
     </div>
   `;
@@ -640,7 +632,6 @@ const MESO_EDIT_FIELD_MAP = {
   "edit-name": ["name", (v) => v],
   "edit-weeks": ["numWeeks", (v) => Number(v) || 1],
   "edit-start-date": ["startDate", (v) => v],
-  "edit-start-day": ["startDayOfWeek", (v) => Number(v)],
 };
 
 function handleSettingsAction(action, btn, view) {
@@ -650,31 +641,23 @@ function handleSettingsAction(action, btn, view) {
     const name = view.querySelector('[data-role="new-meso-name"]').value.trim() || "New Mesocycle";
     const numWeeks = Number(view.querySelector('[data-role="new-meso-weeks"]').value) || 6;
     const startDate = view.querySelector('[data-role="new-meso-start-date"]').value || isoDate(new Date());
-    const startDayOfWeek = Number(view.querySelector('[data-role="new-meso-start-day"]').value);
-    Store.createMesocycle({ name, numWeeks, startDate, startDayOfWeek });
+    Store.createMesocycle({ name, numWeeks, startDate });
   } else {
     return;
   }
   renderCurrentView();
 }
 
-// A <input type=date> value is a real calendar date, so its day-of-week
-// select must match it — otherwise the user could pick e.g. a Wednesday
-// date but leave "Start day of week" on Monday. Parsed as a local date
-// (not via `new Date(str)`, which reads YYYY-MM-DD as UTC and can land on
-// the wrong day depending on timezone).
-function weekdayFromDateInputValue(value) {
-  if (!value) return null;
-  const [y, m, d] = value.split("-").map(Number);
-  return jsDateToWeekdayIndex(new Date(y, m - 1, d));
-}
-
-function syncStartDaySelect(dateInput, selectDataRole) {
-  const weekday = weekdayFromDateInputValue(dateInput.value);
-  if (weekday == null) return null;
-  const select = document.querySelector(`select[data-role="${selectDataRole}"]`);
-  if (select) select.value = weekday;
-  return weekday;
+// The mesocycle's start weekday is always derived from its startDate (see
+// mesocycleStartWeekday in schedule.js) — there's no separate field for it,
+// so it can never disagree with the calendar. This just updates the
+// "Falls on a <Weekday>" hint text next to a start-date input as the user
+// picks a date.
+function updateStartWeekdayHint(dateInput, hintDataRole) {
+  if (!dateInput.value) return;
+  const weekday = jsDateToWeekdayIndex(parseLocalDate(dateInput.value));
+  const hint = document.querySelector(`[data-role="${hintDataRole}"]`);
+  if (hint) hint.textContent = WEEKDAY_LABELS[weekday];
 }
 
 function handleSettingsChange(target) {
@@ -685,8 +668,7 @@ function handleSettingsChange(target) {
   const [field, parse] = mapping;
   Store.updateMesocycle(active.id, { [field]: parse(target.value) });
   if (target.dataset.role === "edit-start-date") {
-    const weekday = syncStartDaySelect(target, "edit-start-day");
-    if (weekday != null) Store.updateMesocycle(active.id, { startDayOfWeek: weekday });
+    updateStartWeekdayHint(target, "edit-start-weekday-hint");
   }
   // No renderCurrentView(): avoid stealing focus mid-edit (see
   // handleTodayChange). Patch the mesocycle-list summary line in place so
@@ -718,7 +700,7 @@ function handleGlobalChange(e) {
   const route = currentRoute();
   if (route === "today" && t.matches("input[data-field]")) handleTodayChange(t);
   else if (route === "program" && t.matches('input[data-role^="slot-"]')) handleProgramChange(t);
-  else if (route === "settings" && t.dataset.role === "new-meso-start-date") syncStartDaySelect(t, "new-meso-start-day");
+  else if (route === "settings" && t.dataset.role === "new-meso-start-date") updateStartWeekdayHint(t, "new-meso-start-weekday-hint");
   else if (route === "settings" && t.matches('[data-role^="edit-"]')) handleSettingsChange(t);
 }
 

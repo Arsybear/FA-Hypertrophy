@@ -50,14 +50,13 @@ const Store = {
   getActiveMesocycle() {
     return Store.getMesocycles().find((m) => m.active) || null;
   },
-  createMesocycle({ name, numWeeks, startDate, startDayOfWeek }) {
+  createMesocycle({ name, numWeeks, startDate }) {
     const list = Store.getMesocycles();
     const meso = {
       id: uid(),
       name,
       numWeeks,
       startDate,
-      startDayOfWeek,
       active: list.length === 0, // first mesocycle auto-activates; later ones don't
       days: [],
     };

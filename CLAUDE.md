@@ -80,13 +80,18 @@ touch `localStorage` directly elsewhere):
 
 ### Scheduling is calendar-based, not a rotation pointer (`js/schedule.js`)
 
-Day templates map onto literal weekdays: `resolveDayForDate(mesocycle, date)`
-computes `offset = (weekday - startDayOfWeek + 7) % 7` and returns
+Day templates map onto literal weekdays. A mesocycle's start weekday is
+**always derived from its `startDate`** via `mesocycleStartWeekday(mesocycle)`
+— there is deliberately no separate `startDayOfWeek` field to edit, so the
+two can never disagree (an earlier version had one; it was removed because a
+manually-set weekday could silently mismatch the real calendar date).
+`resolveDayForDate(mesocycle, date)` computes
+`offset = (weekday - mesocycleStartWeekday(mesocycle) + 7) % 7` and returns
 `days[offset]` (sorted by `order`) or `null` for a rest day. There is no
-"current day" pointer to advance — changing `startDayOfWeek` immediately
-reshuffles which weekday maps to which template, wrapping past Sunday back to
-Monday. This is why "finish workout" doesn't need to touch any schedule
-state.
+"current day" pointer to advance — editing a mesocycle's `startDate`
+immediately reshuffles which weekday maps to which template, wrapping past
+Sunday back to Monday. This is why "finish workout" doesn't need to touch
+any schedule state.
 
 ### Lazy workout generation + progression (`js/app.js` `generateWorkout`, `js/progression.js`)
 
