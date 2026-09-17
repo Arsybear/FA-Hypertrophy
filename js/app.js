@@ -340,7 +340,7 @@ function renderAddExerciseForm() {
     <input type="text" data-role="add-new-name" placeholder="or create new exercise">
     ${renderMuscleGroupSelect("add-new-group")}
     <div class="form-row">
-      <label>Sets <input type="number" data-role="add-sets" value="3" min="1"></label>
+      <label>Sets <input type="number" data-role="add-sets" value="2" min="1"></label>
       <label>Rep min <input type="number" data-role="add-rep-min" value="5" min="1"></label>
       <label>Rep max <input type="number" data-role="add-rep-max" value="10" min="1"></label>
       <label>+% <input type="number" step="0.5" data-role="add-increment" value="${DEFAULT_INCREMENT_PCT}"></label>
@@ -565,7 +565,7 @@ function renderAddSlotForm(day) {
     <input type="text" data-role="new-slot-name" data-day="${day.id}" placeholder="or create new exercise">
     ${renderMuscleGroupSelect("new-slot-group", `data-day="${day.id}"`)}
     <div class="form-row">
-      <label>Sets <input type="number" data-role="new-slot-sets" data-day="${day.id}" value="3" min="1"></label>
+      <label>Sets <input type="number" data-role="new-slot-sets" data-day="${day.id}" value="2" min="1"></label>
       <label>Rep min <input type="number" data-role="new-slot-rep-min" data-day="${day.id}" value="5" min="1"></label>
       <label>Rep max <input type="number" data-role="new-slot-rep-max" data-day="${day.id}" value="10" min="1"></label>
       <label>+% <input type="number" step="0.5" data-role="new-slot-increment" data-day="${day.id}" value="${DEFAULT_INCREMENT_PCT}"></label>
