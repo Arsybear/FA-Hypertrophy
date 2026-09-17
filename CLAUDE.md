@@ -29,6 +29,16 @@ Then open the printed URL. There is no test suite or lint config; verify
 changes by exercising the UI in a browser (resize to ~390px width to check
 the mobile layout).
 
+## Deployment
+
+Hosted on GitHub Pages at https://arsybear.github.io/FA-Hypertrophy/, served
+from the root of the `master` branch (legacy branch-based Pages, no build
+step/Actions workflow). Pushing to `master` redeploys automatically —
+GitHub rebuilds Pages a short while (~1 min) after every push, no manual
+step needed. All asset references are relative paths (no leading `/`), which
+is required for the app to work correctly under this project subpath rather
+than a domain root.
+
 ## Architecture
 
 ### Script load order (`index.html`)
