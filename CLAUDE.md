@@ -112,7 +112,15 @@ any schedule state.
 `#/today` is date-aware, not just "today" — it reads an optional
 `?date=YYYY-MM-DD` query string off the hash (`currentDateParam()`),
 defaulting to the real current date, and renders Prev/Next/Today navigation
-(`renderDateNav`) so past days can be reopened and backfilled. `getTodayContext()`
+(`renderDateNav`) so past days can be reopened and backfilled. A 📅 toggle
+next to that nav opens `renderCalendarPanel`, a read-only grid of the whole
+mesocycle (`meso.startDate` through `numWeeks * 7` days) with a dot per
+training day marking finished/in-progress/untouched status — it only reads
+`Store.getWorkouts()` for that status, never calls `generateWorkout`, so
+just opening the calendar can't create workout instances for days the user
+hasn't visited. Each day is a plain `<a href="#/today?date=...">`, so
+clicking one is an ordinary route change (closes the panel via the usual
+`App.ui` hashchange reset, same as any other navigation). `getTodayContext()`
 resolves that date's workout instance, generating one on first lookup for
 that date (never for a date after today, so a future day can't be
 prematurely snapshotted). Generation snapshots the day template's slots into

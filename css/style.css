@@ -165,9 +165,64 @@ label { display: block; margin-bottom: 8px; font-size: 13px; }
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  flex-wrap: wrap;
   margin-bottom: 12px;
 }
 .date-nav span[aria-disabled="true"] { visibility: hidden; }
+
+.calendar-panel {
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+.calendar-weekdays, .calendar-grid {
+  display: grid;
+  grid-template-columns: repeat(7, 1fr);
+  gap: 4px;
+}
+.calendar-weekdays {
+  margin-bottom: 6px;
+  text-align: center;
+  font-size: 11px;
+}
+.cal-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 0;
+  border-radius: 6px;
+  color: var(--text);
+  text-decoration: none;
+  font-size: 12px;
+}
+.cal-cell.empty { visibility: hidden; }
+.cal-cell.rest { color: var(--muted); }
+.cal-cell.today { outline: 1px solid var(--accent); }
+.cal-cell.selected { background: var(--border); }
+.cal-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  border: 1px solid var(--muted);
+  background: transparent;
+}
+.cal-cell.started .cal-dot { border-color: var(--prefilled); background: var(--prefilled); }
+.cal-cell.finished .cal-dot { border-color: var(--accent); background: var(--accent); }
+
+.calendar-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 11px;
+}
+.calendar-legend span { display: inline-flex; align-items: center; gap: 4px; }
+.calendar-legend .cal-dot { border-color: var(--muted); }
+.calendar-legend .cal-dot.finished { border-color: var(--accent); background: var(--accent); }
+.calendar-legend .cal-dot.started { border-color: var(--prefilled); background: var(--prefilled); }
 
 .workout-header { margin-bottom: 12px; }
 

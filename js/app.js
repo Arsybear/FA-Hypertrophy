@@ -198,9 +198,61 @@ function renderDateNav(meso, dateIso, isToday) {
       ? `<a class="btn small" href="#/today?date=${prevIso}">‹ Prev</a>`
       : `<span class="btn small" aria-disabled="true">‹ Prev</span>`}
     <span class="muted">${WEEKDAY_LABELS[jsDateToWeekdayIndex(date)]} · ${dateIso}</span>
+    <button class="btn small" data-action="toggle-calendar" aria-label="Show training block calendar">📅</button>
     ${!isToday ? `<a class="btn small" href="#/today?date=${nextIso}">Next ›</a>
     <a class="btn small" href="#/today">Today</a>` : ""}
+  </div>
+  ${App.ui.calendarOpen ? renderCalendarPanel(meso, dateIso) : ""}`;
+}
+
+// Read-only overview of the mesocycle's whole date range — never generates
+// or mutates workout instances, just reads existing fah_workouts for status.
+function renderCalendarPanel(meso, selectedIso) {
+  const start = parseLocalDate(meso.startDate);
+  const totalDays = meso.numWeeks * 7;
+  const todayIso = isoDate(new Date());
+  const workoutsByDate = {};
+  Store.getWorkouts()
+    .filter((w) => w.mesocycleId === meso.id)
+    .forEach((w) => { workoutsByDate[w.date] = w; });
+
+  const leadingBlanks = jsDateToWeekdayIndex(start);
+  const cells = Array.from({ length: leadingBlanks }, () => null);
+  for (let i = 0; i < totalDays; i++) {
+    const date = addDays(start, i);
+    const dateIso = isoDate(date);
+    cells.push({ dateIso, date, dayTemplate: resolveDayForDate(meso, date), workout: workoutsByDate[dateIso] });
+  }
+
+  return `<div class="calendar-panel">
+    <div class="calendar-weekdays">${WEEKDAY_LABELS.map((w) => `<span>${w.slice(0, 2)}</span>`).join("")}</div>
+    <div class="calendar-grid">
+      ${cells.map((c) => renderCalendarCell(c, todayIso, selectedIso)).join("")}
+    </div>
+    <div class="calendar-legend muted">
+      <span><span class="cal-dot finished"></span> Finished</span>
+      <span><span class="cal-dot started"></span> In progress</span>
+      <span><span class="cal-dot"></span> Training day</span>
+    </div>
   </div>`;
+}
+
+function renderCalendarCell(c, todayIso, selectedIso) {
+  if (!c) return `<span class="cal-cell empty"></span>`;
+  const { dateIso, date, dayTemplate, workout } = c;
+  const isRest = !dayTemplate;
+  const finished = workout && workout.finished;
+  const classes = [
+    "cal-cell",
+    isRest ? "rest" : "train",
+    dateIso === todayIso ? "today" : "",
+    dateIso === selectedIso ? "selected" : "",
+    finished ? "finished" : (workout ? "started" : ""),
+  ].filter(Boolean).join(" ");
+  return `<a class="${classes}" href="#/today?date=${dateIso}" title="${escapeHtml(dayTemplate ? dayTemplate.name : "Rest day")} — ${dateIso}">
+    <span class="cal-daynum">${date.getDate()}</span>
+    ${!isRest ? `<span class="cal-dot"></span>` : ""}
+  </a>`;
 }
 
 function renderToday(container) {
@@ -356,7 +408,14 @@ function renderAddExerciseForm() {
 
 function handleTodayAction(action, btn, view) {
   const { meso, workout } = getTodayContext();
-  if (!meso || !workout) return;
+  if (!meso) return;
+  if (action === "toggle-calendar") {
+    App.ui.calendarOpen = !App.ui.calendarOpen;
+    App.ui.removeOpen = null; App.ui.substituteOpen = null; App.ui.addOpen = false;
+    renderCurrentView();
+    return;
+  }
+  if (!workout) return;
   const slotId = btn.dataset.slot;
 
   if (action === "move-up" || action === "move-down") {
@@ -372,7 +431,7 @@ function handleTodayAction(action, btn, view) {
   } else if (action === "toggle-history") {
     App.ui.historyOpen = App.ui.historyOpen === slotId ? null : slotId;
   } else if (action === "open-remove") {
-    App.ui.removeOpen = slotId; App.ui.substituteOpen = null; App.ui.addOpen = false;
+    App.ui.removeOpen = slotId; App.ui.substituteOpen = null; App.ui.addOpen = false; App.ui.calendarOpen = false;
   } else if (action === "cancel-remove") {
     App.ui.removeOpen = null;
   } else if (action === "confirm-remove") {
@@ -382,7 +441,7 @@ function handleTodayAction(action, btn, view) {
     Store.updateWorkout(workout.id, { exercises: workout.exercises });
     App.ui.removeOpen = null;
   } else if (action === "open-substitute") {
-    App.ui.substituteOpen = slotId; App.ui.removeOpen = null; App.ui.addOpen = false;
+    App.ui.substituteOpen = slotId; App.ui.removeOpen = null; App.ui.addOpen = false; App.ui.calendarOpen = false;
   } else if (action === "cancel-substitute") {
     App.ui.substituteOpen = null;
   } else if (action === "confirm-substitute") {
@@ -400,7 +459,7 @@ function handleTodayAction(action, btn, view) {
     }
     App.ui.substituteOpen = null;
   } else if (action === "open-add-exercise") {
-    App.ui.addOpen = true; App.ui.removeOpen = null; App.ui.substituteOpen = null;
+    App.ui.addOpen = true; App.ui.removeOpen = null; App.ui.substituteOpen = null; App.ui.calendarOpen = false;
   } else if (action === "cancel-add-exercise") {
     App.ui.addOpen = false;
   } else if (action === "confirm-add-exercise") {
