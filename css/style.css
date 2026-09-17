@@ -8,8 +8,6 @@
   --accent-text: #ffffff;
   --danger: #dc2626;
   --prefilled: #f0ad4e;
-  padding-top: env(safe-area-inset-top, 0px);
-  padding-bottom: env(safe-area-inset-bottom, 0px);
 }
 
 @media (prefers-color-scheme: dark) {
@@ -37,16 +35,34 @@
 
 * { box-sizing: border-box; }
 
+html {
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 body {
+  height: 100%;
   margin: 0;
+  overflow: hidden;
+  overscroll-behavior: none;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 14px;
   background: var(--bg);
   color: var(--text);
 }
 
+/* body itself never scrolls (kills the iOS rubber-band bounce on the page as
+   a whole) — #view is the one scrollable pane, pinned to the viewport. */
 #view {
+  position: fixed;
+  inset: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: none;
+  -webkit-overflow-scrolling: touch;
   padding: 16px;
+  padding-top: calc(16px + env(safe-area-inset-top, 0px));
   padding-bottom: 84px;
   max-width: 560px;
   margin: 0 auto;
@@ -210,6 +226,6 @@ table.sets input { width: 100%; }
 .nav-link.active { color: var(--accent); font-weight: 600; }
 
 @media (max-width: 420px) {
-  #view { padding: 10px; padding-bottom: 84px; }
+  #view { padding: 10px; padding-top: calc(10px + env(safe-area-inset-top, 0px)); padding-bottom: 84px; }
   .form-row label { min-width: 60px; }
 }

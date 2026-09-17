@@ -14,6 +14,14 @@ Static PWA, zero dependencies, zero build step: plain HTML/CSS/vanilla JS +
 (order matters — see below) and share the global scope; there is no bundler
 and no `package.json`.
 
+`html`/`body` are deliberately non-scrolling (`overflow: hidden`,
+`overscroll-behavior: none`, `height: 100%`) — this is what kills iOS
+Safari's rubber-band bounce and makes the installed PWA feel native rather
+than like a webpage. `#view` (in `css/style.css`) is a `position: fixed`
+pane that owns all scrolling itself, also with `overscroll-behavior: none`.
+Any new full-height/scrolling UI must scroll *inside* `#view`, not by
+letting `body` scroll — don't remove these rules to "simplify" layout.
+
 ## Running / testing
 
 Serve the directory with any static file server (required for the service
