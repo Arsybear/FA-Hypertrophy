@@ -65,8 +65,12 @@ touch `localStorage` directly elsewhere):
   `MUSCLE_GROUPS` options in `js/app.js` (defaults to `"Other"` for entries
   created before this field existed). Set once at creation via
   `Store.addExercise(name, muscleGroup)` — there's no separate edit flow for
-  it. Weight units are pounds throughout the UI (`+lb` labels, 5lb default
-  increment); nothing in the data model is unit-typed, it's just a number.
+  it. Weight units are pounds throughout the UI; nothing in the data model
+  is unit-typed, it's just a number. Progression weight increments are a
+  percentage of the current weight, not a flat lb amount (`+%` labels,
+  `slot.weightIncrementPct`, 2.5% default via `DEFAULT_INCREMENT_PCT` in
+  `js/progression.js`, missing on pre-existing slots falls back to the same
+  default) — see `nextSet` below.
   Each real muscle group has its own validated categorical color
   (`--mg-*` custom properties in `css/style.css`, applied via
   `renderMuscleTag()`/`muscleGroupClass()` in `js/app.js` — always go
@@ -105,15 +109,33 @@ any schedule state.
 
 ### Lazy workout generation + progression (`js/app.js` `generateWorkout`, `js/progression.js`)
 
-`#/today` looks up (or generates on first visit) the workout instance for
-today's date via `getTodayContext()`. Generation snapshots the day template's
-slots into the workout's `exercises[]` (so later template edits don't rewrite
-history) and fills each slot's `sets[]` via `buildPrefilledSets`, which finds
-the most recent *finished* workout for the same `dayId` + `slotId` (falling
-back to `exerciseId`, e.g. after a one-off substitution) and applies double
-progression (`nextSet` in `js/progression.js`): hit the top of the rep range
-→ bump weight & reset to the bottom; otherwise +1 rep at the same weight. No
-prior history → blank/unprefilled (manual baseline).
+`#/today` is date-aware, not just "today" — it reads an optional
+`?date=YYYY-MM-DD` query string off the hash (`currentDateParam()`),
+defaulting to the real current date, and renders Prev/Next/Today navigation
+(`renderDateNav`) so past days can be reopened and backfilled. `getTodayContext()`
+resolves that date's workout instance, generating one on first lookup for
+that date (never for a date after today, so a future day can't be
+prematurely snapshotted). Generation snapshots the day template's slots into
+the workout's `exercises[]` and fills each slot's `sets[]` via
+`buildPrefilledSets`, which finds the most recent *finished* workout for the
+same `dayId` + `slotId` (falling back to `exerciseId`, e.g. after a one-off
+substitution) and applies double progression (`nextSet` in
+`js/progression.js`): hit the top of the rep range → bump weight by
+`weightIncrementPct`% (rounded to the nearest `PLATE_INCREMENT`, 2.5lb) and
+reset to the bottom; otherwise +1 rep at the same weight. No prior history →
+blank/unprefilled (manual baseline).
+
+A **finished** workout's `exercises[]` snapshot is frozen — later template
+edits never rewrite it, so history stays accurate to what was actually
+logged. An **unfinished** one is not: every time `getTodayContext()` reads
+it, `reconcileWorkoutWithTemplate()` re-syncs it against the day template's
+current slots (added/removed exercises, reordered slots, changed sets/rep
+range/increment), preserving any sets already logged. This is what makes a
+`#/program` edit reach an already-generated but not-yet-finished `#/today`
+(including a same-day edit made after that day's workout was generated) —
+and it applies to any open instance, not just today's, so reopening an old
+finished workout via "Reopen Workout" also makes it eligible for
+reconciliation again.
 
 Separately, `handleTodayChange` in `js/app.js` also carries a just-entered
 **weight** into every other not-yet-logged set of the same exercise (same

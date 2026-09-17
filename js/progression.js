@@ -1,15 +1,19 @@
-// Double-progression prefill: given the previous logged set and an
-// exercise's rep range / weight increment, compute the next suggested set.
-function nextSet(prevSet, repRangeMin, repRangeMax, weightIncrement) {
-  if (!prevSet || prevSet.reps == null || prevSet.weight == null) return null;
-  if (prevSet.reps >= repRangeMax) {
-    return { weight: round2(prevSet.weight + weightIncrement), reps: repRangeMin };
-  }
-  return { weight: prevSet.weight, reps: Math.min(prevSet.reps + 1, repRangeMax) };
+const DEFAULT_INCREMENT_PCT = 2.5;
+const PLATE_INCREMENT = 2.5;
+
+function roundToPlate(n) {
+  return Math.round(n / PLATE_INCREMENT) * PLATE_INCREMENT;
 }
 
-function round2(n) {
-  return Math.round(n * 100) / 100;
+// Double-progression prefill: given the previous logged set and an
+// exercise's rep range / weight increment (% of current weight), compute
+// the next suggested set.
+function nextSet(prevSet, repRangeMin, repRangeMax, weightIncrementPct) {
+  if (!prevSet || prevSet.reps == null || prevSet.weight == null) return null;
+  if (prevSet.reps >= repRangeMax) {
+    return { weight: roundToPlate(prevSet.weight * (1 + weightIncrementPct / 100)), reps: repRangeMin };
+  }
+  return { weight: prevSet.weight, reps: Math.min(prevSet.reps + 1, repRangeMax) };
 }
 
 // Find the most recent finished workout (date < beforeDate) that contains a
@@ -46,7 +50,7 @@ function buildPrefilledSets(slot, workouts, dayId, beforeIsoDate) {
   for (let i = 0; i < slot.targetSets; i++) {
     const prevSet = prevExercise && prevExercise.sets[i];
     if (prevSet && prevSet.weight != null && prevSet.reps != null) {
-      const suggestion = nextSet(prevSet, slot.repRangeMin, slot.repRangeMax, slot.weightIncrement);
+      const suggestion = nextSet(prevSet, slot.repRangeMin, slot.repRangeMax, slot.weightIncrementPct ?? DEFAULT_INCREMENT_PCT);
       sets.push({
         setIndex: i,
         weight: suggestion ? suggestion.weight : null,

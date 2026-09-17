@@ -91,7 +91,7 @@ function generateWorkout(meso, dayTemplate, dateIso) {
       order: idx,
       repRangeMin: slot.repRangeMin,
       repRangeMax: slot.repRangeMax,
-      weightIncrement: slot.weightIncrement,
+      weightIncrementPct: slot.weightIncrementPct ?? DEFAULT_INCREMENT_PCT,
       sets,
     };
   });
@@ -104,16 +104,75 @@ function generateWorkout(meso, dayTemplate, dateIso) {
   });
 }
 
+// Reconciles an already-generated but not-yet-finished workout instance
+// against its (possibly since-edited) day template — so a #/program change
+// reaches #/today without needing to regenerate history. Finished workouts
+// are never passed in here; they stay frozen as-logged.
+function reconcileWorkoutWithTemplate(workout, dayTemplate) {
+  const templateSlots = [...dayTemplate.exercises].sort((a, b) => a.order - b.order);
+  const templateIds = new Set(templateSlots.map((s) => s.id));
+  let changed = false;
+
+  const before = workout.exercises.length;
+  workout.exercises = workout.exercises.filter((ex) => templateIds.has(ex.slotId));
+  if (workout.exercises.length !== before) changed = true;
+
+  templateSlots.forEach((slot, idx) => {
+    const existing = workout.exercises.find((ex) => ex.slotId === slot.id);
+    const pct = slot.weightIncrementPct ?? DEFAULT_INCREMENT_PCT;
+    if (!existing) {
+      const exercise = Store.getExercises().find((e) => e.id === slot.exerciseId);
+      workout.exercises.push({
+        slotId: slot.id, exerciseId: slot.exerciseId,
+        exerciseName: exercise ? exercise.name : "(unknown exercise)",
+        order: idx, repRangeMin: slot.repRangeMin, repRangeMax: slot.repRangeMax,
+        weightIncrementPct: pct,
+        sets: buildPrefilledSets(slot, Store.getWorkouts(), dayTemplate.id, workout.date),
+      });
+      changed = true;
+      return;
+    }
+    if (existing.order !== idx || existing.repRangeMin !== slot.repRangeMin ||
+        existing.repRangeMax !== slot.repRangeMax || existing.weightIncrementPct !== pct) {
+      Object.assign(existing, { order: idx, repRangeMin: slot.repRangeMin, repRangeMax: slot.repRangeMax, weightIncrementPct: pct });
+      changed = true;
+    }
+    if (existing.sets.length < slot.targetSets) {
+      for (let i = existing.sets.length; i < slot.targetSets; i++) {
+        existing.sets.push({ setIndex: i, weight: null, reps: null, prefilled: false, isLogged: false });
+      }
+      changed = true;
+    } else if (existing.sets.length > slot.targetSets) {
+      existing.sets.length = slot.targetSets;
+      changed = true;
+    }
+  });
+
+  if (changed) Store.updateWorkout(workout.id, { exercises: workout.exercises });
+  return workout;
+}
+
+function currentDateParam() {
+  const q = location.hash.split("?")[1];
+  return q ? new URLSearchParams(q).get("date") : null;
+}
+
 function getTodayContext() {
   const meso = Store.getActiveMesocycle();
-  if (!meso) return { meso: null, dayTemplate: null, workout: null, todayIso: null };
-  const today = new Date();
-  const todayIso = isoDate(today);
-  const dayTemplate = resolveDayForDate(meso, today);
-  if (!dayTemplate) return { meso, dayTemplate: null, workout: null, todayIso };
-  let workout = Store.findWorkoutByDate(meso.id, todayIso);
-  if (!workout) workout = generateWorkout(meso, dayTemplate, todayIso);
-  return { meso, dayTemplate, workout, todayIso };
+  if (!meso) return { meso: null, dayTemplate: null, workout: null, dateIso: null, isToday: true };
+  const realTodayIso = isoDate(new Date());
+  const dateIso = currentDateParam() || realTodayIso;
+  const isToday = dateIso === realTodayIso;
+  const date = parseLocalDate(dateIso);
+  const dayTemplate = resolveDayForDate(meso, date);
+  if (!dayTemplate) return { meso, dayTemplate: null, workout: null, dateIso, isToday };
+  let workout = Store.findWorkoutByDate(meso.id, dateIso);
+  if (workout && !workout.finished) {
+    workout = reconcileWorkoutWithTemplate(workout, dayTemplate);
+  } else if (!workout && dateIso <= realTodayIso) {
+    workout = generateWorkout(meso, dayTemplate, dateIso);
+  }
+  return { meso, dayTemplate, workout, dateIso, isToday };
 }
 
 function getExerciseHistory(dayId, slotId, exerciseId, limit = 8) {
@@ -129,25 +188,49 @@ function getExerciseHistory(dayId, slotId, exerciseId, limit = 8) {
   return rows;
 }
 
+function renderDateNav(meso, dateIso, isToday) {
+  const date = parseLocalDate(dateIso);
+  const prevIso = isoDate(addDays(date, -1));
+  const nextIso = isoDate(addDays(date, 1));
+  const canGoPrev = dateIso > meso.startDate;
+  return `<div class="date-nav">
+    ${canGoPrev
+      ? `<a class="btn small" href="#/today?date=${prevIso}">‹ Prev</a>`
+      : `<span class="btn small" aria-disabled="true">‹ Prev</span>`}
+    <span class="muted">${WEEKDAY_LABELS[jsDateToWeekdayIndex(date)]} · ${dateIso}</span>
+    ${!isToday ? `<a class="btn small" href="#/today?date=${nextIso}">Next ›</a>
+    <a class="btn small" href="#/today">Today</a>` : ""}
+  </div>`;
+}
+
 function renderToday(container) {
-  const { meso, dayTemplate, workout, todayIso } = getTodayContext();
+  const { meso, dayTemplate, workout, dateIso, isToday } = getTodayContext();
   if (!meso) { container.innerHTML = emptyMesoState(); return; }
 
-  const today = new Date();
   if (!dayTemplate) {
-    container.innerHTML = `<div class="card">
-      <h2>Rest day</h2>
-      <p class="muted">${WEEKDAY_LABELS[jsDateToWeekdayIndex(today)]} — nothing scheduled.</p>
-    </div>`;
+    container.innerHTML = `
+      ${renderDateNav(meso, dateIso, isToday)}
+      <div class="card">
+        <h2>Rest day</h2>
+        <p class="muted">nothing scheduled.</p>
+      </div>`;
+    return;
+  }
+
+  if (!workout) {
+    container.innerHTML = `
+      ${renderDateNav(meso, dateIso, isToday)}
+      <div class="card"><p class="muted">Not reached yet.</p></div>`;
     return;
   }
 
   const sortedExercises = [...workout.exercises].sort((a, b) => a.order - b.order);
 
   container.innerHTML = `
+    ${renderDateNav(meso, dateIso, isToday)}
     <div class="workout-header">
       <h2>${escapeHtml(workout.dayName)}</h2>
-      <p class="muted">${WEEKDAY_LABELS[jsDateToWeekdayIndex(today)]} · ${todayIso}${workout.finished ? " · Finished" : ""}</p>
+      <p class="muted">${workout.finished ? "Finished" : ""}</p>
     </div>
     ${sortedExercises.map((ex) => renderExerciseBlock(workout, ex)).join("")}
     <div class="add-exercise-area">
@@ -258,9 +341,9 @@ function renderAddExerciseForm() {
     ${renderMuscleGroupSelect("add-new-group")}
     <div class="form-row">
       <label>Sets <input type="number" data-role="add-sets" value="3" min="1"></label>
-      <label>Rep min <input type="number" data-role="add-rep-min" value="8" min="1"></label>
-      <label>Rep max <input type="number" data-role="add-rep-max" value="12" min="1"></label>
-      <label>+lb <input type="number" step="2.5" data-role="add-increment" value="5"></label>
+      <label>Rep min <input type="number" data-role="add-rep-min" value="5" min="1"></label>
+      <label>Rep max <input type="number" data-role="add-rep-max" value="10" min="1"></label>
+      <label>+% <input type="number" step="0.5" data-role="add-increment" value="${DEFAULT_INCREMENT_PCT}"></label>
     </div>
     <label><input type="radio" name="add-scope" value="workout" checked> This workout only</label>
     <label><input type="radio" name="add-scope" value="future"> All future workouts of this day</label>
@@ -327,20 +410,20 @@ function handleTodayAction(action, btn, view) {
     const targetSets = Number(view.querySelector('input[data-role="add-sets"]').value) || 1;
     const repRangeMin = Number(view.querySelector('input[data-role="add-rep-min"]').value) || 1;
     const repRangeMax = Number(view.querySelector('input[data-role="add-rep-max"]').value) || repRangeMin;
-    const weightIncrement = Number(view.querySelector('input[data-role="add-increment"]').value) || 0;
+    const weightIncrementPct = Number(view.querySelector('input[data-role="add-increment"]').value) || 0;
     const scope = view.querySelector('input[name="add-scope"]:checked').value;
     const exercise = newName ? Store.addExercise(newName, newGroup) : Store.getExercises().find((x) => x.id === select.value);
     if (exercise) {
       let newSlotId;
       if (scope === "future") {
-        const slot = Store.addExerciseSlot(meso.id, workout.dayId, { exerciseId: exercise.id, targetSets, repRangeMin, repRangeMax, weightIncrement });
+        const slot = Store.addExerciseSlot(meso.id, workout.dayId, { exerciseId: exercise.id, targetSets, repRangeMin, repRangeMax, weightIncrementPct });
         newSlotId = slot.id;
       } else {
         newSlotId = uid();
       }
       workout.exercises.push({
         slotId: newSlotId, exerciseId: exercise.id, exerciseName: exercise.name,
-        order: workout.exercises.length, repRangeMin, repRangeMax, weightIncrement,
+        order: workout.exercises.length, repRangeMin, repRangeMax, weightIncrementPct,
         sets: Array.from({ length: targetSets }, (_, i) => ({ setIndex: i, weight: null, reps: null, prefilled: false, isLogged: false })),
       });
       Store.updateWorkout(workout.id, { exercises: workout.exercises });
@@ -440,7 +523,7 @@ function renderDayCard(meso, day, idx) {
           : `<button data-action="open-remove-day" data-day="${day.id}">Remove Day</button>`}
       </div>
       <table class="slots">
-        <thead><tr><th>Exercise</th><th>Sets</th><th>Reps</th><th>+lb</th><th></th></tr></thead>
+        <thead><tr><th>Exercise</th><th>Sets</th><th>Reps</th><th>+%</th><th></th></tr></thead>
         <tbody>
           ${sortedExercises.map((slot) => renderSlotRow(day, slot)).join("")}
         </tbody>
@@ -464,7 +547,7 @@ function renderSlotRow(day, slot) {
       <input type="number" min="1" value="${slot.repRangeMin}" class="rep-input" data-role="slot-rep-min" data-day="${day.id}" data-slot="${slot.id}">-
       <input type="number" min="1" value="${slot.repRangeMax}" class="rep-input" data-role="slot-rep-max" data-day="${day.id}" data-slot="${slot.id}">
     </td>
-    <td><input type="number" step="0.5" value="${slot.weightIncrement}" class="rep-input" data-role="slot-increment" data-day="${day.id}" data-slot="${slot.id}"></td>
+    <td><input type="number" step="0.5" value="${slot.weightIncrementPct ?? DEFAULT_INCREMENT_PCT}" class="rep-input" data-role="slot-increment" data-day="${day.id}" data-slot="${slot.id}"></td>
     <td>
       <button data-action="move-slot-up" data-day="${day.id}" data-slot="${slot.id}">▲</button>
       <button data-action="move-slot-down" data-day="${day.id}" data-slot="${slot.id}">▼</button>
@@ -483,9 +566,9 @@ function renderAddSlotForm(day) {
     ${renderMuscleGroupSelect("new-slot-group", `data-day="${day.id}"`)}
     <div class="form-row">
       <label>Sets <input type="number" data-role="new-slot-sets" data-day="${day.id}" value="3" min="1"></label>
-      <label>Rep min <input type="number" data-role="new-slot-rep-min" data-day="${day.id}" value="8" min="1"></label>
-      <label>Rep max <input type="number" data-role="new-slot-rep-max" data-day="${day.id}" value="12" min="1"></label>
-      <label>+lb <input type="number" step="2.5" data-role="new-slot-increment" data-day="${day.id}" value="5"></label>
+      <label>Rep min <input type="number" data-role="new-slot-rep-min" data-day="${day.id}" value="5" min="1"></label>
+      <label>Rep max <input type="number" data-role="new-slot-rep-max" data-day="${day.id}" value="10" min="1"></label>
+      <label>+% <input type="number" step="0.5" data-role="new-slot-increment" data-day="${day.id}" value="${DEFAULT_INCREMENT_PCT}"></label>
     </div>
     <div class="form-actions">
       <button data-action="confirm-add-slot" data-day="${day.id}">Add</button>
@@ -494,7 +577,7 @@ function renderAddSlotForm(day) {
   </div>`;
 }
 
-const SLOT_FIELD_MAP = { "slot-sets": "targetSets", "slot-rep-min": "repRangeMin", "slot-rep-max": "repRangeMax", "slot-increment": "weightIncrement" };
+const SLOT_FIELD_MAP = { "slot-sets": "targetSets", "slot-rep-min": "repRangeMin", "slot-rep-max": "repRangeMax", "slot-increment": "weightIncrementPct" };
 
 function handleProgramAction(action, btn, view) {
   const meso = Store.getActiveMesocycle();
@@ -521,10 +604,10 @@ function handleProgramAction(action, btn, view) {
     const targetSets = Number(view.querySelector(`input[data-role="new-slot-sets"][data-day="${cssEscape(dayId)}"]`).value) || 1;
     const repRangeMin = Number(view.querySelector(`input[data-role="new-slot-rep-min"][data-day="${cssEscape(dayId)}"]`).value) || 1;
     const repRangeMax = Number(view.querySelector(`input[data-role="new-slot-rep-max"][data-day="${cssEscape(dayId)}"]`).value) || repRangeMin;
-    const weightIncrement = Number(view.querySelector(`input[data-role="new-slot-increment"][data-day="${cssEscape(dayId)}"]`).value) || 0;
+    const weightIncrementPct = Number(view.querySelector(`input[data-role="new-slot-increment"][data-day="${cssEscape(dayId)}"]`).value) || 0;
     const exercise = newName ? Store.addExercise(newName, newGroup) : Store.getExercises().find((x) => x.id === select.value);
     if (exercise) {
-      Store.addExerciseSlot(meso.id, dayId, { exerciseId: exercise.id, targetSets, repRangeMin, repRangeMax, weightIncrement });
+      Store.addExerciseSlot(meso.id, dayId, { exerciseId: exercise.id, targetSets, repRangeMin, repRangeMax, weightIncrementPct });
     }
     App.ui.addExerciseToDay = null;
   } else if (action === "move-slot-up" || action === "move-slot-down") {

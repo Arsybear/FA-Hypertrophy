@@ -26,6 +26,12 @@ function parseLocalDate(isoDateStr) {
   return new Date(y, m - 1, d);
 }
 
+function addDays(date, n) {
+  const d = toDateOnly(date);
+  d.setDate(d.getDate() + n);
+  return d;
+}
+
 // A mesocycle's start weekday is always derived from its startDate — never
 // stored separately, so it can never drift out of sync with the calendar.
 function mesocycleStartWeekday(mesocycle) {
