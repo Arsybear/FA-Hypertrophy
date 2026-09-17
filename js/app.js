@@ -5,6 +5,16 @@ const MUSCLE_GROUPS = [
   "Quads", "Hamstrings", "Glutes", "Calves", "Abs", "Other",
 ];
 
+// "Other" (and anything unrecognized) has no dedicated hue — the CSS
+// default (--muted) applies when this returns "".
+function muscleGroupClass(name) {
+  return MUSCLE_GROUPS.includes(name) && name !== "Other" ? `mg-${name.toLowerCase()}` : "";
+}
+
+function renderMuscleTag(name) {
+  return `<span class="muscle-tag ${muscleGroupClass(name)}">${escapeHtml(name)}</span>`;
+}
+
 function escapeHtml(str) {
   return String(str ?? "").replace(/[&<>"']/g, (c) => ({
     "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
@@ -163,7 +173,7 @@ function renderExerciseBlock(workout, ex) {
           <button data-action="move-down" data-slot="${ex.slotId}" ${workout.finished ? "disabled" : ""}>▼</button>
         </div>
         <div class="ex-name-group">
-          <span class="muscle-tag">${escapeHtml(getExerciseMuscleGroup(ex.exerciseId))}</span>
+          ${renderMuscleTag(getExerciseMuscleGroup(ex.exerciseId))}
           <strong class="ex-name">${escapeHtml(ex.exerciseName)}</strong>
         </div>
         <span class="rep-range muted">${ex.repRangeMin}-${ex.repRangeMax} reps</span>
@@ -446,7 +456,7 @@ function renderSlotRow(day, slot) {
   const exercise = Store.getExercises().find((e) => e.id === slot.exerciseId);
   return `<tr data-slot="${slot.id}" data-day="${day.id}">
     <td>
-      <span class="muscle-tag">${escapeHtml((exercise && exercise.muscleGroup) || "Other")}</span>
+      ${renderMuscleTag((exercise && exercise.muscleGroup) || "Other")}
       <div>${escapeHtml(exercise ? exercise.name : "(unknown)")}</div>
     </td>
     <td><input type="number" min="1" value="${slot.targetSets}" data-role="slot-sets" data-day="${day.id}" data-slot="${slot.id}"></td>
@@ -569,7 +579,7 @@ function renderHistory(container) {
         ${open ? `<div class="history-detail">
           ${[...w.exercises].sort((a, b) => a.order - b.order).map((ex) => `
             <div class="history-exercise">
-              <span><span class="muscle-tag">${escapeHtml(getExerciseMuscleGroup(ex.exerciseId))}</span> <strong>${escapeHtml(ex.exerciseName)}</strong></span>
+              <span>${renderMuscleTag(getExerciseMuscleGroup(ex.exerciseId))} <strong>${escapeHtml(ex.exerciseName)}</strong></span>
               <span>${ex.sets.map((s) => s.weight != null ? `${s.weight}×${s.reps}` : "—").join(", ")}</span>
             </div>`).join("")}
         </div>` : ""}

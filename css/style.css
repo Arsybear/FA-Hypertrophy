@@ -8,6 +8,21 @@
   --accent-text: #ffffff;
   --danger: #dc2626;
   --prefilled: #f0ad4e;
+
+  /* Categorical palette, one hue per muscle group (validated: light-mode
+     lightness band 0.43-0.77 OKLCH L, chroma >= 0.10, worst adjacent CVD
+     ΔE 9.1, worst adjacent normal-vision ΔE 19.6 — see dataviz skill).
+     "Other" deliberately has no slot; it uses --muted (neutral, not a hue). */
+  --mg-chest: #2a78d6;
+  --mg-back: #eb6834;
+  --mg-shoulders: #1baf7a;
+  --mg-biceps: #eda100;
+  --mg-triceps: #e87ba4;
+  --mg-quads: #008300;
+  --mg-hamstrings: #4a3aa7;
+  --mg-glutes: #e34948;
+  --mg-calves: #0097a7;
+  --mg-abs: #a1662f;
 }
 
 @media (prefers-color-scheme: dark) {
@@ -20,6 +35,17 @@
     --accent: #3b82f6;
     --accent-text: #0b1220;
     --prefilled: #eab308;
+
+    --mg-chest: #3987e5;
+    --mg-back: #d95926;
+    --mg-shoulders: #199e70;
+    --mg-biceps: #c98500;
+    --mg-triceps: #d55181;
+    --mg-quads: #008300;
+    --mg-hamstrings: #9085e9;
+    --mg-glutes: #e66767;
+    --mg-calves: #0097a7;
+    --mg-abs: #a1662f;
   }
 }
 :root[data-theme="dark"] {
@@ -31,6 +57,17 @@
   --accent: #3b82f6;
   --accent-text: #0b1220;
   --prefilled: #eab308;
+
+  --mg-chest: #3987e5;
+  --mg-back: #d95926;
+  --mg-shoulders: #199e70;
+  --mg-biceps: #c98500;
+  --mg-triceps: #d55181;
+  --mg-quads: #008300;
+  --mg-hamstrings: #9085e9;
+  --mg-glutes: #e66767;
+  --mg-calves: #0097a7;
+  --mg-abs: #a1662f;
 }
 
 * { box-sizing: border-box; }
@@ -139,8 +176,18 @@ label { display: block; margin-bottom: 8px; font-size: 13px; }
   letter-spacing: 0.05em;
   font-size: 10px;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--muted); /* "Other" / unrecognized group falls back to neutral */
 }
+.muscle-tag.mg-chest { color: var(--mg-chest); }
+.muscle-tag.mg-back { color: var(--mg-back); }
+.muscle-tag.mg-shoulders { color: var(--mg-shoulders); }
+.muscle-tag.mg-biceps { color: var(--mg-biceps); }
+.muscle-tag.mg-triceps { color: var(--mg-triceps); }
+.muscle-tag.mg-quads { color: var(--mg-quads); }
+.muscle-tag.mg-hamstrings { color: var(--mg-hamstrings); }
+.muscle-tag.mg-glutes { color: var(--mg-glutes); }
+.muscle-tag.mg-calves { color: var(--mg-calves); }
+.muscle-tag.mg-abs { color: var(--mg-abs); }
 .reorder-btns { display: flex; flex-direction: column; gap: 2px; }
 .reorder-btns button { padding: 2px 6px; font-size: 10px; }
 

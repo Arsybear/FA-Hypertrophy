@@ -67,6 +67,16 @@ touch `localStorage` directly elsewhere):
   `Store.addExercise(name, muscleGroup)` — there's no separate edit flow for
   it. Weight units are pounds throughout the UI (`+lb` labels, 5lb default
   increment); nothing in the data model is unit-typed, it's just a number.
+  Each real muscle group has its own validated categorical color
+  (`--mg-*` custom properties in `css/style.css`, applied via
+  `renderMuscleTag()`/`muscleGroupClass()` in `js/app.js` — always go
+  through these rather than hand-rolling a `.muscle-tag` span, so a new
+  group can't accidentally skip the palette). "Other" intentionally has no
+  hue slot (falls back to `--muted`) — the categorical method caps at ~8-10
+  reliably distinguishable hues; a genuinely new 11th+ named group should
+  reuse "Other" rather than get a hand-picked color. The palette was chosen
+  and validated with Claude's `dataviz` skill (`validate_palette.js`); redo
+  that validation if the hue set ever changes.
 - `fah_mesocycles` — array of every mesocycle ever created. Exactly one has
   `active: true` at a time; `Store.getActiveMesocycle()` is the source of
   truth for what `#/today` and `#/program` operate on. Each mesocycle owns
