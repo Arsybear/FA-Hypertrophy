@@ -1,0 +1,655 @@
+const App = { ui: {} };
+
+function escapeHtml(str) {
+  return String(str ?? "").replace(/[&<>"']/g, (c) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  })[c]);
+}
+
+function fmtNum(n) {
+  return n == null ? "" : n;
+}
+
+function cssEscape(s) {
+  return String(s).replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
+}
+
+function currentRoute() {
+  return (location.hash.replace(/^#\/?/, "") || "today").split("?")[0];
+}
+
+function renderCurrentView() {
+  const route = currentRoute();
+  document.querySelectorAll(".nav-link").forEach((a) => {
+    a.classList.toggle("active", a.dataset.route === route);
+  });
+  const view = document.getElementById("view");
+  if (route === "today") renderToday(view);
+  else if (route === "program") renderProgram(view);
+  else if (route === "history") renderHistory(view);
+  else if (route === "settings") renderSettings(view);
+  else renderToday(view);
+}
+
+function emptyMesoState() {
+  return `<div class="empty-state"><p>No active mesocycle yet.</p>
+    <a href="#/settings" class="btn">Create one in Settings</a></div>`;
+}
+
+/* ---------------- TODAY ---------------- */
+
+function generateWorkout(meso, dayTemplate, dateIso) {
+  const workouts = Store.getWorkouts();
+  const library = Store.getExercises();
+  const sortedSlots = [...dayTemplate.exercises].sort((a, b) => a.order - b.order);
+  const exercises = sortedSlots.map((slot, idx) => {
+    const exercise = library.find((e) => e.id === slot.exerciseId);
+    const sets = buildPrefilledSets(slot, workouts, dayTemplate.id, dateIso);
+    return {
+      slotId: slot.id,
+      exerciseId: slot.exerciseId,
+      exerciseName: exercise ? exercise.name : "(unknown exercise)",
+      order: idx,
+      repRangeMin: slot.repRangeMin,
+      repRangeMax: slot.repRangeMax,
+      weightIncrement: slot.weightIncrement,
+      sets,
+    };
+  });
+  return Store.createWorkout({
+    mesocycleId: meso.id,
+    date: dateIso,
+    dayId: dayTemplate.id,
+    dayName: dayTemplate.name,
+    exercises,
+  });
+}
+
+function getTodayContext() {
+  const meso = Store.getActiveMesocycle();
+  if (!meso) return { meso: null, dayTemplate: null, workout: null, todayIso: null };
+  const today = new Date();
+  const todayIso = isoDate(today);
+  const dayTemplate = resolveDayForDate(meso, today);
+  if (!dayTemplate) return { meso, dayTemplate: null, workout: null, todayIso };
+  let workout = Store.findWorkoutByDate(meso.id, todayIso);
+  if (!workout) workout = generateWorkout(meso, dayTemplate, todayIso);
+  return { meso, dayTemplate, workout, todayIso };
+}
+
+function getExerciseHistory(dayId, slotId, exerciseId, limit = 8) {
+  const workouts = Store.getWorkouts()
+    .filter((w) => w.finished && w.dayId === dayId)
+    .sort((a, b) => (a.date < b.date ? 1 : -1));
+  const rows = [];
+  for (const w of workouts) {
+    const ex = w.exercises.find((e) => e.slotId === slotId) || w.exercises.find((e) => e.exerciseId === exerciseId);
+    if (ex) rows.push({ date: w.date, sets: ex.sets });
+    if (rows.length >= limit) break;
+  }
+  return rows;
+}
+
+function renderToday(container) {
+  const { meso, dayTemplate, workout, todayIso } = getTodayContext();
+  if (!meso) { container.innerHTML = emptyMesoState(); return; }
+
+  const today = new Date();
+  if (!dayTemplate) {
+    container.innerHTML = `<div class="card">
+      <h2>Rest day</h2>
+      <p class="muted">${WEEKDAY_LABELS[jsDateToWeekdayIndex(today)]} — nothing scheduled.</p>
+    </div>`;
+    return;
+  }
+
+  const sortedExercises = [...workout.exercises].sort((a, b) => a.order - b.order);
+
+  container.innerHTML = `
+    <div class="workout-header">
+      <h2>${escapeHtml(workout.dayName)}</h2>
+      <p class="muted">${WEEKDAY_LABELS[jsDateToWeekdayIndex(today)]} · ${todayIso}${workout.finished ? " · Finished" : ""}</p>
+    </div>
+    ${sortedExercises.map((ex) => renderExerciseBlock(workout, ex)).join("")}
+    <div class="add-exercise-area">
+      ${App.ui.addOpen ? renderAddExerciseForm() : `<button class="btn" data-action="open-add-exercise">+ Add Exercise</button>`}
+    </div>
+    <div class="finish-area">
+      ${workout.finished
+        ? `<button class="btn secondary" data-action="reopen-workout">Reopen Workout</button>`
+        : `<button class="btn primary" data-action="finish-workout">Finish Workout</button>`}
+    </div>
+  `;
+}
+
+function renderExerciseBlock(workout, ex) {
+  const historyOpen = App.ui.historyOpen === ex.slotId;
+  const removeOpen = App.ui.removeOpen === ex.slotId;
+  const subOpen = App.ui.substituteOpen === ex.slotId;
+  return `
+    <div class="card exercise" data-slot="${ex.slotId}">
+      <div class="exercise-header">
+        <div class="reorder-btns">
+          <button data-action="move-up" data-slot="${ex.slotId}" ${workout.finished ? "disabled" : ""}>▲</button>
+          <button data-action="move-down" data-slot="${ex.slotId}" ${workout.finished ? "disabled" : ""}>▼</button>
+        </div>
+        <strong class="ex-name">${escapeHtml(ex.exerciseName)}</strong>
+        <span class="rep-range muted">${ex.repRangeMin}-${ex.repRangeMax} reps</span>
+      </div>
+      <div class="exercise-actions">
+        <button data-action="toggle-history" data-slot="${ex.slotId}">${historyOpen ? "Hide" : "History"}</button>
+        ${!workout.finished ? `
+          <button data-action="open-substitute" data-slot="${ex.slotId}">Swap</button>
+          <button data-action="open-remove" data-slot="${ex.slotId}">Remove</button>
+        ` : ""}
+      </div>
+      ${historyOpen ? renderHistoryPanel(workout.dayId, ex) : ""}
+      ${removeOpen ? renderRemoveForm(ex) : ""}
+      ${subOpen ? renderSubstituteForm(ex) : ""}
+      <table class="sets">
+        <thead><tr><th>Set</th><th>Weight</th><th>Reps</th></tr></thead>
+        <tbody>
+          ${ex.sets.map((s, i) => `
+            <tr>
+              <td>${i + 1}</td>
+              <td><input type="number" step="0.5" inputmode="decimal" placeholder="wt"
+                class="${s.prefilled && !s.isLogged ? "prefilled" : ""}"
+                data-field="weight" data-slot="${ex.slotId}" data-set="${i}"
+                value="${fmtNum(s.weight)}" ${workout.finished ? "disabled" : ""}></td>
+              <td><input type="number" inputmode="numeric" placeholder="reps"
+                class="${s.prefilled && !s.isLogged ? "prefilled" : ""}"
+                data-field="reps" data-slot="${ex.slotId}" data-set="${i}"
+                value="${fmtNum(s.reps)}" ${workout.finished ? "disabled" : ""}></td>
+            </tr>`).join("")}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function renderHistoryPanel(dayId, ex) {
+  const rows = getExerciseHistory(dayId, ex.slotId, ex.exerciseId);
+  if (rows.length === 0) return `<p class="muted history-panel">No history yet.</p>`;
+  return `<div class="history-panel">
+    ${rows.map((r) => `<div class="history-row"><span class="muted">${r.date}</span> ${r.sets.map((s) => s.weight != null ? `${s.weight}×${s.reps}` : "—").join(", ")}</div>`).join("")}
+  </div>`;
+}
+
+function renderRemoveForm(ex) {
+  return `<div class="inline-form" data-slot="${ex.slotId}">
+    <p>Remove ${escapeHtml(ex.exerciseName)}?</p>
+    <label><input type="radio" name="remove-scope-${ex.slotId}" value="workout" checked> This workout only</label>
+    <label><input type="radio" name="remove-scope-${ex.slotId}" value="future"> All future workouts of this day</label>
+    <div class="form-actions">
+      <button data-action="confirm-remove" data-slot="${ex.slotId}">Remove</button>
+      <button data-action="cancel-remove" data-slot="${ex.slotId}">Cancel</button>
+    </div>
+  </div>`;
+}
+
+function renderSubstituteForm(ex) {
+  const library = Store.getExercises().filter((e) => e.id !== ex.exerciseId);
+  return `<div class="inline-form" data-slot="${ex.slotId}">
+    <p>Swap ${escapeHtml(ex.exerciseName)} for:</p>
+    <select data-role="sub-exercise-select" data-slot="${ex.slotId}">
+      <option value="">-- choose existing --</option>
+      ${library.map((e) => `<option value="${e.id}">${escapeHtml(e.name)}</option>`).join("")}
+    </select>
+    <input type="text" data-role="sub-new-name" data-slot="${ex.slotId}" placeholder="or create new exercise">
+    <label><input type="radio" name="sub-scope-${ex.slotId}" value="workout" checked> This workout only</label>
+    <label><input type="radio" name="sub-scope-${ex.slotId}" value="future"> All future workouts of this day</label>
+    <div class="form-actions">
+      <button data-action="confirm-substitute" data-slot="${ex.slotId}">Swap</button>
+      <button data-action="cancel-substitute" data-slot="${ex.slotId}">Cancel</button>
+    </div>
+  </div>`;
+}
+
+function renderAddExerciseForm() {
+  const library = Store.getExercises();
+  return `<div class="inline-form">
+    <p>Add exercise:</p>
+    <select data-role="add-exercise-select">
+      <option value="">-- choose existing --</option>
+      ${library.map((e) => `<option value="${e.id}">${escapeHtml(e.name)}</option>`).join("")}
+    </select>
+    <input type="text" data-role="add-new-name" placeholder="or create new exercise">
+    <div class="form-row">
+      <label>Sets <input type="number" data-role="add-sets" value="3" min="1"></label>
+      <label>Rep min <input type="number" data-role="add-rep-min" value="8" min="1"></label>
+      <label>Rep max <input type="number" data-role="add-rep-max" value="12" min="1"></label>
+      <label>+kg <input type="number" step="0.5" data-role="add-increment" value="2.5"></label>
+    </div>
+    <label><input type="radio" name="add-scope" value="workout" checked> This workout only</label>
+    <label><input type="radio" name="add-scope" value="future"> All future workouts of this day</label>
+    <div class="form-actions">
+      <button data-action="confirm-add-exercise">Add</button>
+      <button data-action="cancel-add-exercise">Cancel</button>
+    </div>
+  </div>`;
+}
+
+function handleTodayAction(action, btn, view) {
+  const { meso, workout } = getTodayContext();
+  if (!meso || !workout) return;
+  const slotId = btn.dataset.slot;
+
+  if (action === "move-up" || action === "move-down") {
+    const dir = action === "move-up" ? -1 : 1;
+    Store.reorderExerciseSlot(meso.id, workout.dayId, slotId, dir);
+    const sorted = [...workout.exercises].sort((a, b) => a.order - b.order);
+    const idx = sorted.findIndex((x) => x.slotId === slotId);
+    const swapIdx = idx + dir;
+    if (idx >= 0 && swapIdx >= 0 && swapIdx < sorted.length) {
+      [sorted[idx].order, sorted[swapIdx].order] = [sorted[swapIdx].order, sorted[idx].order];
+      Store.updateWorkout(workout.id, { exercises: workout.exercises });
+    }
+  } else if (action === "toggle-history") {
+    App.ui.historyOpen = App.ui.historyOpen === slotId ? null : slotId;
+  } else if (action === "open-remove") {
+    App.ui.removeOpen = slotId; App.ui.substituteOpen = null; App.ui.addOpen = false;
+  } else if (action === "cancel-remove") {
+    App.ui.removeOpen = null;
+  } else if (action === "confirm-remove") {
+    const scope = view.querySelector(`input[name="remove-scope-${cssEscape(slotId)}"]:checked`).value;
+    if (scope === "future") Store.removeExerciseSlot(meso.id, workout.dayId, slotId);
+    workout.exercises = workout.exercises.filter((x) => x.slotId !== slotId);
+    Store.updateWorkout(workout.id, { exercises: workout.exercises });
+    App.ui.removeOpen = null;
+  } else if (action === "open-substitute") {
+    App.ui.substituteOpen = slotId; App.ui.removeOpen = null; App.ui.addOpen = false;
+  } else if (action === "cancel-substitute") {
+    App.ui.substituteOpen = null;
+  } else if (action === "confirm-substitute") {
+    const select = view.querySelector(`select[data-role="sub-exercise-select"][data-slot="${cssEscape(slotId)}"]`);
+    const newName = view.querySelector(`input[data-role="sub-new-name"][data-slot="${cssEscape(slotId)}"]`).value.trim();
+    const scope = view.querySelector(`input[name="sub-scope-${cssEscape(slotId)}"]:checked`).value;
+    const exercise = newName ? Store.addExercise(newName) : Store.getExercises().find((x) => x.id === select.value);
+    if (exercise) {
+      const ex = workout.exercises.find((x) => x.slotId === slotId);
+      ex.exerciseId = exercise.id;
+      ex.exerciseName = exercise.name;
+      if (scope === "future") Store.updateExerciseSlot(meso.id, workout.dayId, slotId, { exerciseId: exercise.id });
+      Store.updateWorkout(workout.id, { exercises: workout.exercises });
+    }
+    App.ui.substituteOpen = null;
+  } else if (action === "open-add-exercise") {
+    App.ui.addOpen = true; App.ui.removeOpen = null; App.ui.substituteOpen = null;
+  } else if (action === "cancel-add-exercise") {
+    App.ui.addOpen = false;
+  } else if (action === "confirm-add-exercise") {
+    const select = view.querySelector('select[data-role="add-exercise-select"]');
+    const newName = view.querySelector('input[data-role="add-new-name"]').value.trim();
+    const targetSets = Number(view.querySelector('input[data-role="add-sets"]').value) || 1;
+    const repRangeMin = Number(view.querySelector('input[data-role="add-rep-min"]').value) || 1;
+    const repRangeMax = Number(view.querySelector('input[data-role="add-rep-max"]').value) || repRangeMin;
+    const weightIncrement = Number(view.querySelector('input[data-role="add-increment"]').value) || 0;
+    const scope = view.querySelector('input[name="add-scope"]:checked').value;
+    const exercise = newName ? Store.addExercise(newName) : Store.getExercises().find((x) => x.id === select.value);
+    if (exercise) {
+      let newSlotId;
+      if (scope === "future") {
+        const slot = Store.addExerciseSlot(meso.id, workout.dayId, { exerciseId: exercise.id, targetSets, repRangeMin, repRangeMax, weightIncrement });
+        newSlotId = slot.id;
+      } else {
+        newSlotId = uid();
+      }
+      workout.exercises.push({
+        slotId: newSlotId, exerciseId: exercise.id, exerciseName: exercise.name,
+        order: workout.exercises.length, repRangeMin, repRangeMax, weightIncrement,
+        sets: Array.from({ length: targetSets }, (_, i) => ({ setIndex: i, weight: null, reps: null, prefilled: false, isLogged: false })),
+      });
+      Store.updateWorkout(workout.id, { exercises: workout.exercises });
+    }
+    App.ui.addOpen = false;
+  } else if (action === "finish-workout") {
+    Store.finishWorkout(workout.id);
+  } else if (action === "reopen-workout") {
+    Store.updateWorkout(workout.id, { finished: false, finishedAt: null });
+  }
+  renderCurrentView();
+}
+
+function handleTodayChange(target) {
+  const { workout } = getTodayContext();
+  if (!workout) return;
+  const slotId = target.dataset.slot;
+  const setIndex = Number(target.dataset.set);
+  const field = target.dataset.field;
+  const ex = workout.exercises.find((e) => e.slotId === slotId);
+  if (!ex) return;
+  const set = ex.sets[setIndex];
+  const raw = target.value;
+  const num = raw === "" ? null : parseFloat(raw);
+  set[field] = Number.isNaN(num) ? null : num;
+  set.isLogged = true;
+  set.prefilled = false;
+  Store.updateWorkout(workout.id, { exercises: workout.exercises });
+  // No renderCurrentView() here: a full re-render would replace the input
+  // DOM nodes out from under the user's next click/tab while filling in a
+  // table of set rows, silently dropping focus (and whatever they typed
+  // next). Only the greyed "prefilled" styling needs to change.
+  target.classList.remove("prefilled");
+}
+
+/* ---------------- PROGRAM ---------------- */
+
+function renderProgram(container) {
+  const meso = Store.getActiveMesocycle();
+  if (!meso) { container.innerHTML = emptyMesoState(); return; }
+  const sortedDays = [...meso.days].sort((a, b) => a.order - b.order);
+
+  container.innerHTML = `
+    <h2>${escapeHtml(meso.name)}</h2>
+    <p class="muted">Start day: ${WEEKDAY_LABELS[meso.startDayOfWeek]}</p>
+    ${sortedDays.map((day, idx) => renderDayCard(meso, day, idx)).join("")}
+    <div class="add-exercise-area">
+      ${App.ui.addDayOpen
+        ? `<div class="inline-form">
+             <input type="text" data-role="new-day-name" placeholder="Day name (e.g. Push)">
+             <div class="form-actions">
+               <button data-action="confirm-add-day">Add Day</button>
+               <button data-action="cancel-add-day">Cancel</button>
+             </div>
+           </div>`
+        : `<button class="btn" data-action="open-add-day">+ Add Day</button>`}
+    </div>
+  `;
+}
+
+function renderDayCard(meso, day, idx) {
+  const weekday = WEEKDAY_LABELS[(meso.startDayOfWeek + idx) % 7];
+  const sortedExercises = [...day.exercises].sort((a, b) => a.order - b.order);
+  const removeConfirm = App.ui.removeDayConfirm === day.id;
+  const addExOpen = App.ui.addExerciseToDay === day.id;
+  return `
+    <div class="card day-card" data-day="${day.id}">
+      <div class="day-header">
+        <div class="reorder-btns">
+          <button data-action="move-day-up" data-day="${day.id}">▲</button>
+          <button data-action="move-day-down" data-day="${day.id}">▼</button>
+        </div>
+        <strong>${escapeHtml(day.name)}</strong>
+        <span class="muted">${weekday}</span>
+        ${removeConfirm
+          ? `<span><button data-action="confirm-remove-day" data-day="${day.id}">Confirm</button>
+             <button data-action="cancel-remove-day" data-day="${day.id}">Cancel</button></span>`
+          : `<button data-action="open-remove-day" data-day="${day.id}">Remove Day</button>`}
+      </div>
+      <table class="slots">
+        <thead><tr><th>Exercise</th><th>Sets</th><th>Reps</th><th>+kg</th><th></th></tr></thead>
+        <tbody>
+          ${sortedExercises.map((slot) => renderSlotRow(day, slot)).join("")}
+        </tbody>
+      </table>
+      ${addExOpen
+        ? renderAddSlotForm(day)
+        : `<button class="btn small" data-action="open-add-slot" data-day="${day.id}">+ Add Exercise</button>`}
+    </div>
+  `;
+}
+
+function renderSlotRow(day, slot) {
+  const exercise = Store.getExercises().find((e) => e.id === slot.exerciseId);
+  return `<tr data-slot="${slot.id}" data-day="${day.id}">
+    <td>${escapeHtml(exercise ? exercise.name : "(unknown)")}</td>
+    <td><input type="number" min="1" value="${slot.targetSets}" data-role="slot-sets" data-day="${day.id}" data-slot="${slot.id}"></td>
+    <td>
+      <input type="number" min="1" value="${slot.repRangeMin}" class="rep-input" data-role="slot-rep-min" data-day="${day.id}" data-slot="${slot.id}">-
+      <input type="number" min="1" value="${slot.repRangeMax}" class="rep-input" data-role="slot-rep-max" data-day="${day.id}" data-slot="${slot.id}">
+    </td>
+    <td><input type="number" step="0.5" value="${slot.weightIncrement}" class="rep-input" data-role="slot-increment" data-day="${day.id}" data-slot="${slot.id}"></td>
+    <td>
+      <button data-action="move-slot-up" data-day="${day.id}" data-slot="${slot.id}">▲</button>
+      <button data-action="move-slot-down" data-day="${day.id}" data-slot="${slot.id}">▼</button>
+      <button data-action="remove-slot" data-day="${day.id}" data-slot="${slot.id}">✕</button>
+    </td>
+  </tr>`;
+}
+
+function renderAddSlotForm(day) {
+  const library = Store.getExercises();
+  return `<div class="inline-form" data-day="${day.id}">
+    <select data-role="new-slot-exercise" data-day="${day.id}">
+      <option value="">-- choose existing --</option>
+      ${library.map((e) => `<option value="${e.id}">${escapeHtml(e.name)}</option>`).join("")}
+    </select>
+    <input type="text" data-role="new-slot-name" data-day="${day.id}" placeholder="or create new exercise">
+    <div class="form-row">
+      <label>Sets <input type="number" data-role="new-slot-sets" data-day="${day.id}" value="3" min="1"></label>
+      <label>Rep min <input type="number" data-role="new-slot-rep-min" data-day="${day.id}" value="8" min="1"></label>
+      <label>Rep max <input type="number" data-role="new-slot-rep-max" data-day="${day.id}" value="12" min="1"></label>
+      <label>+kg <input type="number" step="0.5" data-role="new-slot-increment" data-day="${day.id}" value="2.5"></label>
+    </div>
+    <div class="form-actions">
+      <button data-action="confirm-add-slot" data-day="${day.id}">Add</button>
+      <button data-action="cancel-add-slot" data-day="${day.id}">Cancel</button>
+    </div>
+  </div>`;
+}
+
+const SLOT_FIELD_MAP = { "slot-sets": "targetSets", "slot-rep-min": "repRangeMin", "slot-rep-max": "repRangeMax", "slot-increment": "weightIncrement" };
+
+function handleProgramAction(action, btn, view) {
+  const meso = Store.getActiveMesocycle();
+  if (!meso) return;
+  const dayId = btn.dataset.day;
+  const slotId = btn.dataset.slot;
+
+  if (action === "move-day-up" || action === "move-day-down") {
+    Store.reorderDay(meso.id, dayId, action === "move-day-up" ? -1 : 1);
+  } else if (action === "open-remove-day") {
+    App.ui.removeDayConfirm = dayId;
+  } else if (action === "cancel-remove-day") {
+    App.ui.removeDayConfirm = null;
+  } else if (action === "confirm-remove-day") {
+    Store.removeDay(meso.id, dayId); App.ui.removeDayConfirm = null;
+  } else if (action === "open-add-slot") {
+    App.ui.addExerciseToDay = dayId;
+  } else if (action === "cancel-add-slot") {
+    App.ui.addExerciseToDay = null;
+  } else if (action === "confirm-add-slot") {
+    const select = view.querySelector(`select[data-role="new-slot-exercise"][data-day="${cssEscape(dayId)}"]`);
+    const newName = view.querySelector(`input[data-role="new-slot-name"][data-day="${cssEscape(dayId)}"]`).value.trim();
+    const targetSets = Number(view.querySelector(`input[data-role="new-slot-sets"][data-day="${cssEscape(dayId)}"]`).value) || 1;
+    const repRangeMin = Number(view.querySelector(`input[data-role="new-slot-rep-min"][data-day="${cssEscape(dayId)}"]`).value) || 1;
+    const repRangeMax = Number(view.querySelector(`input[data-role="new-slot-rep-max"][data-day="${cssEscape(dayId)}"]`).value) || repRangeMin;
+    const weightIncrement = Number(view.querySelector(`input[data-role="new-slot-increment"][data-day="${cssEscape(dayId)}"]`).value) || 0;
+    const exercise = newName ? Store.addExercise(newName) : Store.getExercises().find((x) => x.id === select.value);
+    if (exercise) {
+      Store.addExerciseSlot(meso.id, dayId, { exerciseId: exercise.id, targetSets, repRangeMin, repRangeMax, weightIncrement });
+    }
+    App.ui.addExerciseToDay = null;
+  } else if (action === "move-slot-up" || action === "move-slot-down") {
+    Store.reorderExerciseSlot(meso.id, dayId, slotId, action === "move-slot-up" ? -1 : 1);
+  } else if (action === "remove-slot") {
+    Store.removeExerciseSlot(meso.id, dayId, slotId);
+  } else if (action === "open-add-day") {
+    App.ui.addDayOpen = true;
+  } else if (action === "cancel-add-day") {
+    App.ui.addDayOpen = false;
+  } else if (action === "confirm-add-day") {
+    const name = view.querySelector('input[data-role="new-day-name"]').value.trim();
+    if (name) Store.addDay(meso.id, name);
+    App.ui.addDayOpen = false;
+  }
+  renderCurrentView();
+}
+
+function handleProgramChange(target) {
+  const meso = Store.getActiveMesocycle();
+  if (!meso) return;
+  const dayId = target.dataset.day, slotId = target.dataset.slot;
+  const field = SLOT_FIELD_MAP[target.dataset.role];
+  if (!field) return;
+  Store.updateExerciseSlot(meso.id, dayId, slotId, { [field]: Number(target.value) });
+  // No renderCurrentView(): see the comment in handleTodayChange — this
+  // table has the same rapid-tab-through-inputs pattern.
+}
+
+/* ---------------- HISTORY ---------------- */
+
+function renderHistory(container) {
+  const workouts = Store.getWorkouts()
+    .filter((w) => w.finished)
+    .sort((a, b) => (a.date < b.date ? 1 : -1));
+  const mesos = Store.getMesocycles();
+
+  if (workouts.length === 0) {
+    container.innerHTML = `<div class="empty-state"><p>No finished workouts yet.</p></div>`;
+    return;
+  }
+
+  container.innerHTML = `<div class="history-list">
+    ${workouts.map((w) => {
+      const meso = mesos.find((m) => m.id === w.mesocycleId);
+      const open = App.ui.historyExpanded === w.id;
+      return `<div class="card history-entry">
+        <div class="history-entry-header" data-action="toggle-workout" data-id="${w.id}">
+          <strong>${w.date}</strong> — ${escapeHtml(w.dayName)}
+          <span class="muted">${meso ? escapeHtml(meso.name) : ""}</span>
+        </div>
+        ${open ? `<div class="history-detail">
+          ${[...w.exercises].sort((a, b) => a.order - b.order).map((ex) => `
+            <div class="history-exercise">
+              <strong>${escapeHtml(ex.exerciseName)}</strong>
+              <span>${ex.sets.map((s) => s.weight != null ? `${s.weight}×${s.reps}` : "—").join(", ")}</span>
+            </div>`).join("")}
+        </div>` : ""}
+      </div>`;
+    }).join("")}
+  </div>`;
+}
+
+function handleHistoryAction(action, btn) {
+  if (action === "toggle-workout") {
+    const id = btn.dataset.id;
+    App.ui.historyExpanded = App.ui.historyExpanded === id ? null : id;
+    renderCurrentView();
+  }
+}
+
+/* ---------------- SETTINGS ---------------- */
+
+function renderSettings(container) {
+  const mesos = Store.getMesocycles().sort((a, b) => (a.startDate < b.startDate ? 1 : -1));
+  const active = mesos.find((m) => m.active);
+
+  container.innerHTML = `
+    <h2>Mesocycles</h2>
+    ${mesos.length === 0 ? `<p class="muted">No mesocycles yet.</p>` : `
+      <div class="meso-list">
+        ${mesos.map((m) => `
+          <div class="card meso-item ${m.active ? "active-meso" : ""}">
+            <div>
+              <strong>${escapeHtml(m.name)}</strong>
+              <span class="muted">${m.numWeeks}wk · starts ${m.startDate}</span>
+            </div>
+            ${m.active ? `<span class="badge">Active</span>` : `<button data-action="switch-active" data-id="${m.id}">Make Active</button>`}
+          </div>`).join("")}
+      </div>
+    `}
+
+    ${active ? `
+      <h3>Edit "${escapeHtml(active.name)}"</h3>
+      <div class="card">
+        <label>Name <input type="text" data-role="edit-name" value="${escapeHtml(active.name)}"></label>
+        <label>Weeks <input type="number" min="1" data-role="edit-weeks" value="${active.numWeeks}"></label>
+        <label>Start date <input type="date" data-role="edit-start-date" value="${active.startDate}"></label>
+        <label>Start day of week
+          <select data-role="edit-start-day">
+            ${WEEKDAY_LABELS.map((label, i) => `<option value="${i}" ${active.startDayOfWeek === i ? "selected" : ""}>${label}</option>`).join("")}
+          </select>
+        </label>
+      </div>
+    ` : ""}
+
+    <h3>Create New Mesocycle</h3>
+    <div class="card">
+      <label>Name <input type="text" data-role="new-meso-name" placeholder="e.g. Meso 1"></label>
+      <label>Weeks <input type="number" min="1" value="6" data-role="new-meso-weeks"></label>
+      <label>Start date <input type="date" data-role="new-meso-start-date" value="${isoDate(new Date())}"></label>
+      <label>Start day of week
+        <select data-role="new-meso-start-day">
+          ${WEEKDAY_LABELS.map((label, i) => `<option value="${i}" ${jsDateToWeekdayIndex(new Date()) === i ? "selected" : ""}>${label}</option>`).join("")}
+        </select>
+      </label>
+      <button class="btn primary" data-action="create-meso">Create</button>
+    </div>
+  `;
+}
+
+const MESO_EDIT_FIELD_MAP = {
+  "edit-name": ["name", (v) => v],
+  "edit-weeks": ["numWeeks", (v) => Number(v) || 1],
+  "edit-start-date": ["startDate", (v) => v],
+  "edit-start-day": ["startDayOfWeek", (v) => Number(v)],
+};
+
+function handleSettingsAction(action, btn, view) {
+  if (action === "switch-active") {
+    Store.setActiveMesocycle(btn.dataset.id);
+  } else if (action === "create-meso") {
+    const name = view.querySelector('[data-role="new-meso-name"]').value.trim() || "New Mesocycle";
+    const numWeeks = Number(view.querySelector('[data-role="new-meso-weeks"]').value) || 6;
+    const startDate = view.querySelector('[data-role="new-meso-start-date"]').value || isoDate(new Date());
+    const startDayOfWeek = Number(view.querySelector('[data-role="new-meso-start-day"]').value);
+    Store.createMesocycle({ name, numWeeks, startDate, startDayOfWeek });
+  } else {
+    return;
+  }
+  renderCurrentView();
+}
+
+function handleSettingsChange(target) {
+  const mapping = MESO_EDIT_FIELD_MAP[target.dataset.role];
+  if (!mapping) return;
+  const active = Store.getActiveMesocycle();
+  if (!active) return;
+  const [field, parse] = mapping;
+  Store.updateMesocycle(active.id, { [field]: parse(target.value) });
+  // No renderCurrentView(): avoid stealing focus mid-edit (see
+  // handleTodayChange). Patch the mesocycle-list summary line in place so
+  // it still reflects the edit.
+  const updated = Store.getActiveMesocycle();
+  const item = document.querySelector(".meso-item.active-meso");
+  if (item) {
+    item.querySelector("strong").textContent = updated.name;
+    item.querySelector(".muted").textContent = `${updated.numWeeks}wk · starts ${updated.startDate}`;
+  }
+}
+
+/* ---------------- GLOBAL EVENT DELEGATION ---------------- */
+
+function handleGlobalClick(e) {
+  const btn = e.target.closest("[data-action]");
+  if (!btn) return;
+  const view = document.getElementById("view");
+  const route = currentRoute();
+  const action = btn.dataset.action;
+  if (route === "today") handleTodayAction(action, btn, view);
+  else if (route === "program") handleProgramAction(action, btn, view);
+  else if (route === "history") handleHistoryAction(action, btn);
+  else if (route === "settings") handleSettingsAction(action, btn, view);
+}
+
+function handleGlobalChange(e) {
+  const t = e.target;
+  const route = currentRoute();
+  if (route === "today" && t.matches("input[data-field]")) handleTodayChange(t);
+  else if (route === "program" && t.matches('input[data-role^="slot-"]')) handleProgramChange(t);
+  else if (route === "settings" && t.matches('[data-role^="edit-"]')) handleSettingsChange(t);
+}
+
+/* ---------------- INIT ---------------- */
+
+window.addEventListener("hashchange", () => { App.ui = {}; renderCurrentView(); });
+window.addEventListener("DOMContentLoaded", () => {
+  document.getElementById("view").addEventListener("click", handleGlobalClick);
+  document.getElementById("view").addEventListener("change", handleGlobalChange);
+  if (!location.hash) location.hash = "#/today";
+  renderCurrentView();
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register("sw.js").catch(() => {});
+  }
+});
