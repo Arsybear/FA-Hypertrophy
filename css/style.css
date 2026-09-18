@@ -11,13 +11,16 @@
   --success: #16a34a;
 
   /* Every position:fixed element establishes its own stacking context, so
-     without an explicit z-index it silently defaults to painting below any
-     fixed sibling that DOES have one (regardless of z-index set on anything
-     nested inside it) — this is what hid the history sheet's rows behind
-     .bottom-nav. Any new position:fixed element must use one of these
-     tokens rather than an ad hoc number, so relative order stays obvious. */
+     a full-screen overlay nested inside #view can never out-stack a fixed
+     sibling like .bottom-nav no matter what z-index it declares — only
+     raising #view's OWN z-index would do that, and #view spans the full
+     viewport (it's just visually empty near the bottom, under .bottom-nav),
+     so that would make it swallow clicks meant for the nav everywhere, not
+     just behind an open overlay. That's why overlays render into the
+     unpositioned #overlay-root sibling in index.html instead of inside
+     #view — see the comment there. Any new position:fixed element must use
+     one of these tokens rather than an ad hoc number. */
   --z-nav: 10;
-  --z-view: 20;
   --z-overlay-backdrop: 100;
   --z-overlay: 101;
 
@@ -108,7 +111,6 @@ body {
 #view {
   position: fixed;
   inset: 0;
-  z-index: var(--z-view);
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: none;

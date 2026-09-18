@@ -64,6 +64,7 @@ function renderCurrentView() {
     a.classList.toggle("active", a.dataset.route === route);
   });
   const view = document.getElementById("view");
+  document.getElementById("overlay-root").innerHTML = "";
   if (route === "today") renderToday(view);
   else if (route === "program") renderProgram(view);
   else if (route === "history") renderHistory(view);
@@ -302,8 +303,8 @@ function renderToday(container) {
         ? `<button class="btn secondary" data-action="reopen-workout">Reopen Workout</button>`
         : `<button class="btn primary" data-action="finish-workout">Finish Workout</button>`}
     </div>
-    ${historyEx ? renderHistorySheet(historyEx) : ""}
   `;
+  document.getElementById("overlay-root").innerHTML = historyEx ? renderHistorySheet(historyEx) : "";
 }
 
 function renderExerciseBlock(workout, ex) {
@@ -976,6 +977,11 @@ window.addEventListener("hashchange", () => { App.ui = {}; renderCurrentView(); 
 window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("view").addEventListener("click", handleGlobalClick);
   document.getElementById("view").addEventListener("change", handleGlobalChange);
+  // Full-screen overlays (see index.html) render outside #view, so they need
+  // their own delegated listener — handleGlobalClick itself doesn't care
+  // which container an event came from (it re-derives state from Store and
+  // currentRoute() rather than closing over anything from the listener).
+  document.getElementById("overlay-root").addEventListener("click", handleGlobalClick);
   if (!location.hash) location.hash = "#/today";
   renderCurrentView();
   if ("serviceWorker" in navigator) {

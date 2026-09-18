@@ -22,17 +22,26 @@ pane that owns all scrolling itself, also with `overscroll-behavior: none`.
 Any new full-height/scrolling UI must scroll *inside* `#view`, not by
 letting `body` scroll — don't remove these rules to "simplify" layout.
 
-Every `position: fixed` element establishes its own stacking context, so
-without an explicit `z-index` it silently defaults to painting *below* any
-fixed sibling that does have one — regardless of any `z-index` set on
-elements nested inside it (that only orders things within its own stacking
-context, not against a sibling one). This bit a full-bleed overlay once
-already (a modal's rows were invisibly hidden behind `.bottom-nav`, which
-had an explicit `z-index` while `#view` didn't). Any new `position: fixed`
-element must use one of the `--z-*` tokens defined in `css/style.css`'s
-`:root` (`--z-nav`, `--z-view`, `--z-overlay-backdrop`, `--z-overlay`)
-rather than an ad hoc number, so relative stacking order stays centralized
-and obvious.
+Every `position: fixed` element (like `#view` or `.bottom-nav`) always
+establishes its own stacking context, so a full-bleed overlay nested inside
+`#view` can never out-stack a fixed sibling like `.bottom-nav` no matter
+what `z-index` it declares — that only orders things within `#view`'s own
+stacking context, not against a sibling one. Raising `#view`'s own
+`z-index` instead doesn't work either: `#view` spans the full viewport (via
+`inset: 0`) even though it's visually empty near the bottom under
+`.bottom-nav`, so it would then swallow every click meant for the nav bar,
+not just while an overlay is open (this actually happened — twice, first
+as invisible-but-clickable history rows, then as an unclickable bottom nav
+after the wrong fix). The correct fix: full-screen overlays (e.g. the
+exercise history sheet) render into `#overlay-root`, an unpositioned `<div>`
+in `index.html` that's a *sibling* of `#view` and `.bottom-nav`, not nested
+inside `#view` — since it isn't itself `position: fixed`, its fixed-position
+children compete directly against `#view`/`.bottom-nav` in the shared root
+stacking context using the `--z-*` tokens in `css/style.css`'s `:root`
+(`--z-nav`, `--z-overlay-backdrop`, `--z-overlay`). `#overlay-root` gets its
+own delegated click listener (see Event handling below) since it's outside
+`#view`. Any new full-screen overlay follows this same pattern; any other
+new `position: fixed` element still needs one of the `--z-*` tokens.
 
 ## Running / testing
 
@@ -192,16 +201,19 @@ template (see `move-up`/`move-down` handling in `handleTodayAction`).
 
 ### Event handling (`js/app.js`)
 
-One global delegated `click` and `change` listener is attached **once** to
+A global delegated `click` and `change` listener is attached **once** to
 the `#view` container at startup (`handleGlobalClick`/`handleGlobalChange`),
 dispatching by `currentRoute()` and `data-action`/`data-role` attributes.
-Handlers always re-fetch current state from `Store` rather than closing over
-state captured at render time — `#view`'s `innerHTML` is replaced wholesale
-on every render, but the container node itself persists, so a naive
-per-render `addEventListener` would leak stale listeners across route
-changes. Don't reintroduce that pattern; add new interactive elements as
-`data-action="…"` + a case in the relevant `handle*Action`/`handle*Change`
-function instead.
+`handleGlobalClick` is also attached to `#overlay-root` (see above) for the
+same reason — it doesn't close over anything from the listener itself, just
+re-derives state from `Store`/`currentRoute()`, so the same function safely
+serves both containers. Handlers always re-fetch current state from `Store`
+rather than closing over state captured at render time — `#view`'s
+`innerHTML` is replaced wholesale on every render, but the container node
+itself persists, so a naive per-render `addEventListener` would leak stale
+listeners across route changes. Don't reintroduce that pattern; add new
+interactive elements as `data-action="…"` + a case in the relevant
+`handle*Action`/`handle*Change` function instead.
 
 Ephemeral UI state (which inline form/history panel is open) lives in the
 module-level `App.ui` object, reset on every `hashchange` but preserved

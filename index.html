@@ -19,6 +19,16 @@
     <a class="nav-link" data-route="settings" href="#/settings">Settings</a>
   </nav>
 
+  <!-- Full-screen overlays (e.g. the exercise history sheet) render here,
+       not inside #view — #view is position:fixed and always establishes
+       its own stacking context, so raising #view's own z-index to let an
+       overlay inside it beat .bottom-nav would make #view's entire (empty,
+       but still hit-testable) box intercept clicks meant for the nav bar
+       everywhere, not just where the overlay is visible. This sibling stays
+       unpositioned itself, so its fixed-position children compete directly
+       against #view/.bottom-nav using the --z-* tokens. -->
+  <div id="overlay-root"></div>
+
   <script src="js/storage.js"></script>
   <script src="js/schedule.js"></script>
   <script src="js/progression.js"></script>
