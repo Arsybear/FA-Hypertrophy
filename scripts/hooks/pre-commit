@@ -1,0 +1,41 @@
+#!/usr/bin/env bash
+# Blocks a commit that changes a service-worker-cached asset (see the
+# ASSETS list in sw.js) without also bumping CACHE_NAME in sw.js.
+#
+# Why: sw.js does stale-while-revalidate caching, so an installed PWA
+# instance only picks up a real update when CACHE_NAME changes (that's
+# what triggers install/activate to fetch a fresh set and drop the old
+# cache). Forgetting the bump has silently shipped stale/mixed asset
+# versions to already-installed PWAs (mobile home-screen installs) twice
+# before — see git history on sw.js.
+#
+# Setup (once per clone): git config core.hooksPath scripts/hooks
+
+set -e
+
+changed=$(git diff --cached --name-only)
+
+assets=$(sed -n '/const ASSETS = \[/,/\];/p' sw.js | grep -oE '"[^"]+"' | tr -d '"')
+
+needs_bump=false
+for f in $assets; do
+  f_clean=${f#./}
+  [ -z "$f_clean" ] && f_clean="index.html"
+  if echo "$changed" | grep -qx "$f_clean"; then
+    needs_bump=true
+    break
+  fi
+done
+
+if [ "$needs_bump" = true ]; then
+  if ! echo "$changed" | grep -qx "sw.js"; then
+    echo "pre-commit: a cached asset changed but sw.js isn't staged." >&2
+    echo "Bump CACHE_NAME in sw.js and stage it (see sw.js's ASSETS list)." >&2
+    exit 1
+  fi
+  if ! git diff --cached -- sw.js | grep -q '^+const CACHE_NAME'; then
+    echo "pre-commit: sw.js is staged but CACHE_NAME wasn't bumped." >&2
+    echo "Bump CACHE_NAME so installed PWAs actually pick up this change." >&2
+    exit 1
+  fi
+fi

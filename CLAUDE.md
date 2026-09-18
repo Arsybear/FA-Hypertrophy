@@ -47,6 +47,20 @@ step needed. All asset references are relative paths (no leading `/`), which
 is required for the app to work correctly under this project subpath rather
 than a domain root.
 
+The app is a PWA with a service worker (`sw.js`) that does
+stale-while-revalidate caching of `sw.js`'s `ASSETS` list (`index.html`,
+`css/style.css`, every `js/*.js`, `manifest.json`). An already-installed
+PWA instance (a phone home-screen install in particular) only picks up a
+real update when `CACHE_NAME` changes — that's what triggers `install` to
+fetch a genuinely fresh set and `activate` to drop the old cache; otherwise
+it can keep serving a stale or *mixed* asset set (e.g. new JS paired with
+old CSS) until requests happen to individually revalidate. **Any commit
+that changes one of those cached files must also bump `CACHE_NAME` in
+`sw.js` in the same commit** — this has silently broken a deployed feature
+twice before. A `scripts/hooks/pre-commit` hook enforces this (run once per
+clone: `git config core.hooksPath scripts/hooks`) and blocks a commit that
+changes a cached asset without a `CACHE_NAME` bump.
+
 ## Architecture
 
 ### Script load order (`index.html`)
