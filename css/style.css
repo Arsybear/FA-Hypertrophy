@@ -97,6 +97,7 @@ body {
 #view {
   position: fixed;
   inset: 0;
+  z-index: 20;
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: none;
