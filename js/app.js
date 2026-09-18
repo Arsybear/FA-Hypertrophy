@@ -176,13 +176,21 @@ function getTodayContext() {
   return { meso, dayTemplate, workout, dateIso, isToday };
 }
 
-function getExerciseHistory(slotId, exerciseId) {
+// Matches slotId first (same day template), then exerciseId (same library
+// exercise on a different day), then falls back to exerciseName — some
+// pre-existing logged workouts predate exerciseId being reliably set on
+// every exercise entry, so a stale/missing exerciseId shouldn't hide
+// history that #/history (which only ever reads exerciseName) can already
+// show is really there.
+function getExerciseHistory(slotId, exerciseId, exerciseName) {
   const workouts = Store.getWorkouts()
     .filter((w) => w.finished)
     .sort((a, b) => (a.date < b.date ? 1 : -1));
   const rows = [];
   for (const w of workouts) {
-    const ex = w.exercises.find((e) => e.slotId === slotId) || w.exercises.find((e) => e.exerciseId === exerciseId);
+    const ex = w.exercises.find((e) => e.slotId === slotId)
+      || w.exercises.find((e) => e.exerciseId === exerciseId)
+      || w.exercises.find((e) => e.exerciseName === exerciseName);
     if (ex) rows.push({ date: w.date, dayName: w.dayName, sets: ex.sets });
   }
   return rows;
@@ -345,7 +353,7 @@ function renderExerciseBlock(workout, ex) {
 }
 
 function renderHistorySheet(ex) {
-  const rows = getExerciseHistory(ex.slotId, ex.exerciseId);
+  const rows = getExerciseHistory(ex.slotId, ex.exerciseId, ex.exerciseName);
   return `<div class="history-sheet-backdrop" data-action="close-history">
     <div class="history-sheet" data-action="">
       <div class="history-sheet-header">
