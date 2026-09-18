@@ -16,6 +16,24 @@ function nextSet(prevSet, repRangeMin, repRangeMax, weightIncrementPct) {
   return { weight: prevSet.weight, reps: Math.min(prevSet.reps + 1, repRangeMax) };
 }
 
+// Estimate the rep count at newWeight that represents the same effort as
+// the (baseWeight, baseReps) anchor, by averaging the Epley and Brzycki
+// 1RM formulas (each inverted with itself, then averaged) — this cancels
+// most of Epley's high-rep overestimate and Brzycki's underestimate. Still
+// an estimate, most reliable in the ~2-10 rep range.
+function equivalentReps(baseWeight, baseReps, newWeight) {
+  if (baseWeight == null || baseReps == null || newWeight == null || newWeight <= 0) return null;
+  const epley1RM = baseWeight * (1 + baseReps / 30);
+  const repsEpley = 30 * (epley1RM / newWeight - 1);
+  let repsAvg = repsEpley;
+  if (baseReps < 37) {
+    const brzycki1RM = (baseWeight * 36) / (37 - baseReps);
+    const repsBrzycki = 37 - (36 * newWeight) / brzycki1RM;
+    repsAvg = (repsEpley + repsBrzycki) / 2;
+  }
+  return Math.max(1, Math.round(repsAvg));
+}
+
 // Find the most recent finished workout (date < beforeDate) that contains a
 // matching exercise slot, preferring an exact slotId match and falling back
 // to exerciseId (e.g. after a substitution reset history for that slot).
@@ -55,11 +73,14 @@ function buildPrefilledSets(slot, workouts, dayId, beforeIsoDate) {
         setIndex: i,
         weight: suggestion ? suggestion.weight : null,
         reps: suggestion ? suggestion.reps : null,
+        baseWeight: suggestion ? suggestion.weight : null,
+        baseReps: suggestion ? suggestion.reps : null,
         prefilled: !!suggestion,
         isLogged: false,
+        repsManual: false,
       });
     } else {
-      sets.push({ setIndex: i, weight: null, reps: null, prefilled: false, isLogged: false });
+      sets.push({ setIndex: i, weight: null, reps: null, baseWeight: null, baseReps: null, prefilled: false, isLogged: false, repsManual: false });
     }
   }
   return sets;

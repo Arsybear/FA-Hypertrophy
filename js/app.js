@@ -139,7 +139,7 @@ function reconcileWorkoutWithTemplate(workout, dayTemplate) {
     }
     if (existing.sets.length < slot.targetSets) {
       for (let i = existing.sets.length; i < slot.targetSets; i++) {
-        existing.sets.push({ setIndex: i, weight: null, reps: null, prefilled: false, isLogged: false });
+        existing.sets.push({ setIndex: i, weight: null, reps: null, baseWeight: null, baseReps: null, prefilled: false, isLogged: false, repsManual: false });
       }
       changed = true;
     } else if (existing.sets.length > slot.targetSets) {
@@ -496,6 +496,27 @@ function handleTodayAction(action, btn, view) {
   renderCurrentView();
 }
 
+// Recalculates a set's rep target to the estimated equivalent-effort value
+// at newWeight (relative to its fixed baseWeight/baseReps prefill anchor —
+// see buildPrefilledSets), and patches the live reps input directly, since
+// handleTodayChange deliberately avoids a full re-render (see below). Skips
+// a set whose reps the user already typed by hand (repsManual) — a manual
+// override should stick even if the weight on that same set is edited again
+// afterward, same as an already-logged sibling set is left alone.
+function applyEquivalentReps(set, newWeight, slotId, index) {
+  if (set.repsManual) return;
+  const reps = equivalentReps(set.baseWeight, set.baseReps, newWeight);
+  if (reps == null) return;
+  set.reps = reps;
+  const repsInput = document.querySelector(
+    `input[data-field="reps"][data-slot="${cssEscape(slotId)}"][data-set="${index}"]`
+  );
+  if (repsInput) {
+    repsInput.value = reps;
+    repsInput.classList.remove("prefilled");
+  }
+}
+
 function handleTodayChange(target) {
   const { workout } = getTodayContext();
   if (!workout) return;
@@ -510,6 +531,7 @@ function handleTodayChange(target) {
   set[field] = Number.isNaN(num) ? null : num;
   set.isLogged = true;
   set.prefilled = false;
+  if (field === "reps") set.repsManual = true;
 
   // Once a weight is entered, carry it into any other set of this exercise
   // the user hasn't touched yet (still prefilled/blank) — same weight across
@@ -526,7 +548,9 @@ function handleTodayChange(target) {
         otherInput.value = num;
         otherInput.classList.remove("prefilled");
       }
+      applyEquivalentReps(s, num, slotId, i);
     });
+    applyEquivalentReps(set, num, slotId, setIndex);
   }
 
   Store.updateWorkout(workout.id, { exercises: workout.exercises });
