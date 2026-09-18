@@ -272,6 +272,11 @@ table.sets th, table.sets td, table.slots th, table.slots td {
 }
 table.sets input { width: 100%; }
 
+.slot-actions { display: flex; align-items: center; gap: 4px; }
+.slot-reorder { display: flex; gap: 4px; }
+.slot-actions .btn-danger { margin-left: 10px; }
+.btn-danger { border-color: var(--danger); color: var(--danger); }
+
 .inline-form {
   background: var(--bg);
   border: 1px dashed var(--border);

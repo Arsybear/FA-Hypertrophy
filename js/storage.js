@@ -39,6 +39,9 @@ const Store = {
     writeJSON(KEYS.exercises, exercises);
     return ex;
   },
+  removeExercise(id) {
+    writeJSON(KEYS.exercises, Store.getExercises().filter((e) => e.id !== id));
+  },
 
   // --- Mesocycles ---
   getMesocycles() {

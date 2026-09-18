@@ -34,8 +34,9 @@ function getExerciseMuscleGroup(exerciseId) {
   return (exercise && exercise.muscleGroup) || "Other";
 }
 
-function renderExerciseOptionsGrouped(excludeId) {
-  const library = Store.getExercises().filter((e) => e.id !== excludeId);
+function renderExerciseOptionsGrouped(excludeId, onlyGroup) {
+  let library = Store.getExercises().filter((e) => e.id !== excludeId);
+  if (onlyGroup) library = library.filter((e) => (e.muscleGroup || "Other") === onlyGroup);
   const byGroup = {};
   for (const ex of library) {
     const group = ex.muscleGroup || "Other";
@@ -47,9 +48,9 @@ function renderExerciseOptionsGrouped(excludeId) {
     </optgroup>`).join("");
 }
 
-function renderMuscleGroupSelect(dataRole, dataAttrs = "") {
-  return `<select data-role="${dataRole}" ${dataAttrs}>
-    ${MUSCLE_GROUPS.map((g) => `<option value="${g}">${g}</option>`).join("")}
+function renderMuscleGroupSelect(dataRole, dataAttrs = "", lockedValue = null) {
+  return `<select data-role="${dataRole}" ${dataAttrs} ${lockedValue ? 'disabled data-locked="true"' : ""}>
+    ${MUSCLE_GROUPS.map((g) => `<option value="${g}" ${g === lockedValue ? "selected" : ""}>${g}</option>`).join("")}
   </select>`;
 }
 
@@ -365,14 +366,15 @@ function renderRemoveForm(ex) {
 }
 
 function renderSubstituteForm(ex) {
+  const currentGroup = getExerciseMuscleGroup(ex.exerciseId);
   return `<div class="inline-form" data-slot="${ex.slotId}">
-    <p>Swap ${escapeHtml(ex.exerciseName)} for:</p>
+    <p>Swap ${escapeHtml(ex.exerciseName)} for another ${escapeHtml(currentGroup)} exercise:</p>
     <select data-role="sub-exercise-select" data-slot="${ex.slotId}">
       <option value="">-- choose existing --</option>
-      ${renderExerciseOptionsGrouped(ex.exerciseId)}
+      ${renderExerciseOptionsGrouped(ex.exerciseId, currentGroup)}
     </select>
     <input type="text" data-role="sub-new-name" data-slot="${ex.slotId}" placeholder="or create new exercise">
-    ${renderMuscleGroupSelect("sub-new-group", `data-slot="${ex.slotId}"`)}
+    ${renderMuscleGroupSelect("sub-new-group", `data-slot="${ex.slotId}"`, currentGroup)}
     <label><input type="radio" name="sub-scope-${ex.slotId}" value="workout" checked> This workout only</label>
     <label><input type="radio" name="sub-scope-${ex.slotId}" value="future"> All future workouts of this day</label>
     <div class="form-actions">
@@ -631,10 +633,12 @@ function renderSlotRow(day, slot) {
       <input type="number" min="1" value="${slot.repRangeMax}" class="rep-input" data-role="slot-rep-max" data-day="${day.id}" data-slot="${slot.id}">
     </td>
     <td><input type="number" step="0.5" value="${slot.weightIncrementPct ?? DEFAULT_INCREMENT_PCT}" class="rep-input" data-role="slot-increment" data-day="${day.id}" data-slot="${slot.id}"></td>
-    <td>
-      <button data-action="move-slot-up" data-day="${day.id}" data-slot="${slot.id}">▲</button>
-      <button data-action="move-slot-down" data-day="${day.id}" data-slot="${slot.id}">▼</button>
-      <button data-action="remove-slot" data-day="${day.id}" data-slot="${slot.id}">✕</button>
+    <td class="slot-actions">
+      <span class="slot-reorder">
+        <button data-action="move-slot-up" data-day="${day.id}" data-slot="${slot.id}">▲</button>
+        <button data-action="move-slot-down" data-day="${day.id}" data-slot="${slot.id}">▼</button>
+      </span>
+      <button class="btn-danger" data-action="remove-slot" data-day="${day.id}" data-slot="${slot.id}">✕</button>
     </td>
   </tr>`;
 }
@@ -767,6 +771,7 @@ function handleHistoryAction(action, btn) {
 function renderSettings(container) {
   const mesos = Store.getMesocycles().sort((a, b) => (a.startDate < b.startDate ? 1 : -1));
   const active = mesos.find((m) => m.active);
+  const exercises = Store.getExercises().sort((a, b) => a.name.localeCompare(b.name));
 
   container.innerHTML = `
     <h2>Mesocycles</h2>
@@ -801,6 +806,23 @@ function renderSettings(container) {
       <p class="muted">Falls on a <span data-role="new-meso-start-weekday-hint">${WEEKDAY_LABELS[jsDateToWeekdayIndex(new Date())]}</span> — day 1 of the program always starts there.</p>
       <button class="btn primary" data-action="create-meso">Create</button>
     </div>
+
+    <h3>Exercise Library</h3>
+    ${exercises.length === 0 ? `<p class="muted">No exercises yet.</p>` : `
+      <div class="meso-list">
+        ${exercises.map((ex) => `
+          <div class="card meso-item">
+            <div>
+              ${renderMuscleTag(ex.muscleGroup || "Other")}
+              <strong>${escapeHtml(ex.name)}</strong>
+            </div>
+            ${App.ui.removeExerciseOpen === ex.id
+              ? `<span><button data-action="confirm-remove-exercise" data-id="${ex.id}">Confirm</button>
+                 <button data-action="cancel-remove-exercise" data-id="${ex.id}">Cancel</button></span>`
+              : `<button class="btn-danger" data-action="open-remove-exercise" data-id="${ex.id}">Remove</button>`}
+          </div>`).join("")}
+      </div>
+    `}
   `;
 }
 
@@ -818,6 +840,13 @@ function handleSettingsAction(action, btn, view) {
     const numWeeks = Number(view.querySelector('[data-role="new-meso-weeks"]').value) || 6;
     const startDate = view.querySelector('[data-role="new-meso-start-date"]').value || isoDate(new Date());
     Store.createMesocycle({ name, numWeeks, startDate });
+  } else if (action === "open-remove-exercise") {
+    App.ui.removeExerciseOpen = btn.dataset.id;
+  } else if (action === "cancel-remove-exercise") {
+    App.ui.removeExerciseOpen = null;
+  } else if (action === "confirm-remove-exercise") {
+    Store.removeExercise(btn.dataset.id);
+    App.ui.removeExerciseOpen = null;
   } else {
     return;
   }
@@ -871,6 +900,43 @@ function handleGlobalClick(e) {
   else if (route === "settings") handleSettingsAction(action, btn, view);
 }
 
+const EXISTING_EXERCISE_SELECT_ROLES =
+  'select[data-role="add-exercise-select"], select[data-role="sub-exercise-select"], select[data-role="new-slot-exercise"]';
+const NEW_EXERCISE_NAME_INPUT_ROLES =
+  'input[data-role="add-new-name"], input[data-role="sub-new-name"], input[data-role="new-slot-name"]';
+
+// When an existing exercise is picked from one of the add/swap dropdowns,
+// its muscle group is already fixed — grey out the sibling group select so
+// it can't be edited into a value that doesn't match. Clearing the pick
+// re-enables it. A "locked" group select (swap's create-new field, always
+// pinned to the current slot's group) is left alone either way.
+function handleExercisePickChange(selectEl) {
+  const container = selectEl.closest(".inline-form");
+  const groupSelect = container.querySelector('select[data-role$="-group"]');
+  const nameInput = container.querySelector('input[data-role$="-name"]');
+  if (groupSelect.dataset.locked === "true") return;
+  const exercise = selectEl.value ? Store.getExercises().find((e) => e.id === selectEl.value) : null;
+  if (exercise) {
+    groupSelect.value = exercise.muscleGroup || "Other";
+    groupSelect.disabled = true;
+    nameInput.value = "";
+  } else {
+    groupSelect.disabled = false;
+  }
+}
+
+// Typing a new exercise name means the "pick existing" path no longer
+// applies — reset that dropdown and re-enable the group select (unless it's
+// permanently locked, e.g. the swap form's same-muscle-group constraint).
+function handleNewNameTyped(inputEl) {
+  if (inputEl.value.trim() === "") return;
+  const container = inputEl.closest(".inline-form");
+  const groupSelect = container.querySelector('select[data-role$="-group"]');
+  if (groupSelect.dataset.locked !== "true") groupSelect.disabled = false;
+  const existingSelect = container.querySelector(EXISTING_EXERCISE_SELECT_ROLES);
+  if (existingSelect) existingSelect.value = "";
+}
+
 function handleGlobalChange(e) {
   const t = e.target;
   const route = currentRoute();
@@ -878,6 +944,8 @@ function handleGlobalChange(e) {
   else if (route === "program" && t.matches('input[data-role^="slot-"]')) handleProgramChange(t);
   else if (route === "settings" && t.dataset.role === "new-meso-start-date") updateStartWeekdayHint(t, "new-meso-start-weekday-hint");
   else if (route === "settings" && t.matches('[data-role^="edit-"]')) handleSettingsChange(t);
+  else if (t.matches(EXISTING_EXERCISE_SELECT_ROLES)) handleExercisePickChange(t);
+  else if (t.matches(NEW_EXERCISE_NAME_INPUT_ROLES)) handleNewNameTyped(t);
 }
 
 /* ---------------- INIT ---------------- */
