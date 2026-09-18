@@ -10,6 +10,17 @@
   --prefilled: #f0ad4e;
   --success: #16a34a;
 
+  /* Every position:fixed element establishes its own stacking context, so
+     without an explicit z-index it silently defaults to painting below any
+     fixed sibling that DOES have one (regardless of z-index set on anything
+     nested inside it) — this is what hid the history sheet's rows behind
+     .bottom-nav. Any new position:fixed element must use one of these
+     tokens rather than an ad hoc number, so relative order stays obvious. */
+  --z-nav: 10;
+  --z-view: 20;
+  --z-overlay-backdrop: 100;
+  --z-overlay: 101;
+
   /* Categorical palette, one hue per muscle group (validated: light-mode
      lightness band 0.43-0.77 OKLCH L, chroma >= 0.10, worst adjacent CVD
      ΔE 9.1, worst adjacent normal-vision ΔE 19.6 — see dataviz skill).
@@ -97,7 +108,7 @@ body {
 #view {
   position: fixed;
   inset: 0;
-  z-index: 20;
+  z-index: var(--z-view);
   overflow-y: auto;
   overflow-x: hidden;
   overscroll-behavior: none;
@@ -303,7 +314,7 @@ table.sets input { width: 100%; }
   position: fixed;
   inset: 0;
   background: rgba(0, 0, 0, 0.5);
-  z-index: 100;
+  z-index: var(--z-overlay-backdrop);
   display: flex;
   align-items: flex-end;
 }
@@ -319,7 +330,7 @@ table.sets input { width: 100%; }
   border-radius: 12px 12px 0 0;
   padding: 16px;
   padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px));
-  z-index: 101;
+  z-index: var(--z-overlay);
 }
 .history-sheet-header {
   display: flex;
@@ -360,7 +371,7 @@ table.sets input { width: 100%; }
   bottom: 0;
   left: 0;
   right: 0;
-  z-index: 10;
+  z-index: var(--z-nav);
   display: flex;
   background: var(--card-bg);
   border-top: 1px solid var(--border);

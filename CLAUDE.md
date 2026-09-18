@@ -22,6 +22,18 @@ pane that owns all scrolling itself, also with `overscroll-behavior: none`.
 Any new full-height/scrolling UI must scroll *inside* `#view`, not by
 letting `body` scroll — don't remove these rules to "simplify" layout.
 
+Every `position: fixed` element establishes its own stacking context, so
+without an explicit `z-index` it silently defaults to painting *below* any
+fixed sibling that does have one — regardless of any `z-index` set on
+elements nested inside it (that only orders things within its own stacking
+context, not against a sibling one). This bit a full-bleed overlay once
+already (a modal's rows were invisibly hidden behind `.bottom-nav`, which
+had an explicit `z-index` while `#view` didn't). Any new `position: fixed`
+element must use one of the `--z-*` tokens defined in `css/style.css`'s
+`:root` (`--z-nav`, `--z-view`, `--z-overlay-backdrop`, `--z-overlay`)
+rather than an ad hoc number, so relative stacking order stays centralized
+and obvious.
+
 ## Running / testing
 
 Serve the directory with any static file server (required for the service
