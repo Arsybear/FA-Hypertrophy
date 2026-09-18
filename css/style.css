@@ -8,6 +8,7 @@
   --accent-text: #ffffff;
   --danger: #dc2626;
   --prefilled: #f0ad4e;
+  --success: #16a34a;
 
   /* Categorical palette, one hue per muscle group (validated: light-mode
      lightness band 0.43-0.77 OKLCH L, chroma >= 0.10, worst adjacent CVD
@@ -35,6 +36,7 @@
     --accent: #3b82f6;
     --accent-text: #0b1220;
     --prefilled: #eab308;
+    --success: #22c55e;
 
     --mg-chest: #3987e5;
     --mg-back: #d95926;
@@ -57,6 +59,7 @@
   --accent: #3b82f6;
   --accent-text: #0b1220;
   --prefilled: #eab308;
+  --success: #22c55e;
 
   --mg-chest: #3987e5;
   --mg-back: #d95926;
@@ -209,8 +212,8 @@ label { display: block; margin-bottom: 8px; font-size: 13px; }
   border: 1px solid var(--muted);
   background: transparent;
 }
-.cal-cell.started .cal-dot { border-color: var(--prefilled); background: var(--prefilled); }
-.cal-cell.finished .cal-dot { border-color: var(--accent); background: var(--accent); }
+.cal-cell.started .cal-dot { border-color: var(--accent); background: var(--accent); }
+.cal-cell.finished .cal-dot { border-color: var(--success); background: var(--success); }
 
 .calendar-legend {
   display: flex;
@@ -221,8 +224,8 @@ label { display: block; margin-bottom: 8px; font-size: 13px; }
 }
 .calendar-legend span { display: inline-flex; align-items: center; gap: 4px; }
 .calendar-legend .cal-dot { border-color: var(--muted); }
-.calendar-legend .cal-dot.finished { border-color: var(--accent); background: var(--accent); }
-.calendar-legend .cal-dot.started { border-color: var(--prefilled); background: var(--prefilled); }
+.calendar-legend .cal-dot.finished { border-color: var(--success); background: var(--success); }
+.calendar-legend .cal-dot.started { border-color: var(--accent); background: var(--accent); }
 
 .workout-header { margin-bottom: 12px; }
 
