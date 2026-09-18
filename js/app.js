@@ -176,15 +176,14 @@ function getTodayContext() {
   return { meso, dayTemplate, workout, dateIso, isToday };
 }
 
-function getExerciseHistory(dayId, slotId, exerciseId, limit = 8) {
+function getExerciseHistory(slotId, exerciseId) {
   const workouts = Store.getWorkouts()
-    .filter((w) => w.finished && w.dayId === dayId)
+    .filter((w) => w.finished)
     .sort((a, b) => (a.date < b.date ? 1 : -1));
   const rows = [];
   for (const w of workouts) {
     const ex = w.exercises.find((e) => e.slotId === slotId) || w.exercises.find((e) => e.exerciseId === exerciseId);
-    if (ex) rows.push({ date: w.date, sets: ex.sets });
-    if (rows.length >= limit) break;
+    if (ex) rows.push({ date: w.date, dayName: w.dayName, sets: ex.sets });
   }
   return rows;
 }
@@ -278,6 +277,7 @@ function renderToday(container) {
   }
 
   const sortedExercises = [...workout.exercises].sort((a, b) => a.order - b.order);
+  const historyEx = App.ui.historyOpen ? workout.exercises.find((e) => e.slotId === App.ui.historyOpen) : null;
 
   container.innerHTML = `
     ${renderDateNav(meso, dateIso, isToday)}
@@ -294,11 +294,11 @@ function renderToday(container) {
         ? `<button class="btn secondary" data-action="reopen-workout">Reopen Workout</button>`
         : `<button class="btn primary" data-action="finish-workout">Finish Workout</button>`}
     </div>
+    ${historyEx ? renderHistorySheet(historyEx) : ""}
   `;
 }
 
 function renderExerciseBlock(workout, ex) {
-  const historyOpen = App.ui.historyOpen === ex.slotId;
   const removeOpen = App.ui.removeOpen === ex.slotId;
   const subOpen = App.ui.substituteOpen === ex.slotId;
   return `
@@ -315,13 +315,12 @@ function renderExerciseBlock(workout, ex) {
         <span class="rep-range muted">${ex.repRangeMin}-${ex.repRangeMax} reps</span>
       </div>
       <div class="exercise-actions">
-        <button data-action="toggle-history" data-slot="${ex.slotId}">${historyOpen ? "Hide" : "History"}</button>
+        <button data-action="open-history" data-slot="${ex.slotId}">History</button>
         ${!workout.finished ? `
           <button data-action="open-substitute" data-slot="${ex.slotId}">Swap</button>
           <button data-action="open-remove" data-slot="${ex.slotId}">Remove</button>
         ` : ""}
       </div>
-      ${historyOpen ? renderHistoryPanel(workout.dayId, ex) : ""}
       ${removeOpen ? renderRemoveForm(ex) : ""}
       ${subOpen ? renderSubstituteForm(ex) : ""}
       <table class="sets">
@@ -345,11 +344,21 @@ function renderExerciseBlock(workout, ex) {
   `;
 }
 
-function renderHistoryPanel(dayId, ex) {
-  const rows = getExerciseHistory(dayId, ex.slotId, ex.exerciseId);
-  if (rows.length === 0) return `<p class="muted history-panel">No history yet.</p>`;
-  return `<div class="history-panel">
-    ${rows.map((r) => `<div class="history-row"><span class="muted">${r.date}</span> ${r.sets.map((s) => s.weight != null ? `${s.weight}×${s.reps}` : "—").join(", ")}</div>`).join("")}
+function renderHistorySheet(ex) {
+  const rows = getExerciseHistory(ex.slotId, ex.exerciseId);
+  return `<div class="history-sheet-backdrop" data-action="close-history">
+    <div class="history-sheet" data-action="">
+      <div class="history-sheet-header">
+        <strong>${escapeHtml(ex.exerciseName)}</strong>
+        <button data-action="close-history">✕</button>
+      </div>
+      ${rows.length === 0
+        ? `<p class="muted">No history yet.</p>`
+        : rows.map((r) => `<div class="history-row">
+            <span class="muted">${r.date} · ${escapeHtml(r.dayName)}</span>
+            ${r.sets.map((s) => s.weight != null ? `${s.weight}×${s.reps}` : "—").join(", ")}
+          </div>`).join("")}
+    </div>
   </div>`;
 }
 
@@ -413,7 +422,12 @@ function handleTodayAction(action, btn, view) {
   if (!meso) return;
   if (action === "toggle-calendar") {
     App.ui.calendarOpen = !App.ui.calendarOpen;
-    App.ui.removeOpen = null; App.ui.substituteOpen = null; App.ui.addOpen = false;
+    App.ui.removeOpen = null; App.ui.substituteOpen = null; App.ui.addOpen = false; App.ui.historyOpen = null;
+    renderCurrentView();
+    return;
+  }
+  if (action === "close-history") {
+    App.ui.historyOpen = null;
     renderCurrentView();
     return;
   }
@@ -430,10 +444,10 @@ function handleTodayAction(action, btn, view) {
       [sorted[idx].order, sorted[swapIdx].order] = [sorted[swapIdx].order, sorted[idx].order];
       Store.updateWorkout(workout.id, { exercises: workout.exercises });
     }
-  } else if (action === "toggle-history") {
-    App.ui.historyOpen = App.ui.historyOpen === slotId ? null : slotId;
+  } else if (action === "open-history") {
+    App.ui.historyOpen = slotId; App.ui.removeOpen = null; App.ui.substituteOpen = null; App.ui.addOpen = false; App.ui.calendarOpen = false;
   } else if (action === "open-remove") {
-    App.ui.removeOpen = slotId; App.ui.substituteOpen = null; App.ui.addOpen = false; App.ui.calendarOpen = false;
+    App.ui.removeOpen = slotId; App.ui.substituteOpen = null; App.ui.addOpen = false; App.ui.calendarOpen = false; App.ui.historyOpen = null;
   } else if (action === "cancel-remove") {
     App.ui.removeOpen = null;
   } else if (action === "confirm-remove") {
@@ -443,7 +457,7 @@ function handleTodayAction(action, btn, view) {
     Store.updateWorkout(workout.id, { exercises: workout.exercises });
     App.ui.removeOpen = null;
   } else if (action === "open-substitute") {
-    App.ui.substituteOpen = slotId; App.ui.removeOpen = null; App.ui.addOpen = false; App.ui.calendarOpen = false;
+    App.ui.substituteOpen = slotId; App.ui.removeOpen = null; App.ui.addOpen = false; App.ui.calendarOpen = false; App.ui.historyOpen = null;
   } else if (action === "cancel-substitute") {
     App.ui.substituteOpen = null;
   } else if (action === "confirm-substitute") {
@@ -461,7 +475,7 @@ function handleTodayAction(action, btn, view) {
     }
     App.ui.substituteOpen = null;
   } else if (action === "open-add-exercise") {
-    App.ui.addOpen = true; App.ui.removeOpen = null; App.ui.substituteOpen = null; App.ui.calendarOpen = false;
+    App.ui.addOpen = true; App.ui.removeOpen = null; App.ui.substituteOpen = null; App.ui.calendarOpen = false; App.ui.historyOpen = null;
   } else if (action === "cancel-add-exercise") {
     App.ui.addOpen = false;
   } else if (action === "confirm-add-exercise") {
