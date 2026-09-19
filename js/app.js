@@ -288,12 +288,11 @@ function renderToday(container) {
   const sortedExercises = [...workout.exercises].sort((a, b) => a.order - b.order);
   const historyEx = App.ui.historyOpen ? workout.exercises.find((e) => e.slotId === App.ui.historyOpen) : null;
 
-  let prevGroup = null;
-  const exerciseBlocksHtml = sortedExercises.map((ex) => {
-    const group = getExerciseMuscleGroup(ex.exerciseId);
-    const divider = prevGroup !== null && group !== prevGroup ? `<div class="muscle-divider"></div>` : "";
-    prevGroup = group;
-    return divider + renderExerciseBlock(workout, ex);
+  const exerciseGroups = sortedExercises.map((ex) => getExerciseMuscleGroup(ex.exerciseId));
+  const exerciseBlocksHtml = sortedExercises.map((ex, i) => {
+    const isGroupStart = i === 0 || exerciseGroups[i] !== exerciseGroups[i - 1];
+    const isGroupEnd = i === exerciseGroups.length - 1 || exerciseGroups[i] !== exerciseGroups[i + 1];
+    return renderExerciseBlock(workout, ex, isGroupStart, isGroupEnd);
   }).join("");
 
   container.innerHTML = `
@@ -315,11 +314,12 @@ function renderToday(container) {
   document.getElementById("overlay-root").innerHTML = historyEx ? renderHistorySheet(historyEx) : "";
 }
 
-function renderExerciseBlock(workout, ex) {
+function renderExerciseBlock(workout, ex, isGroupStart, isGroupEnd) {
   const removeOpen = App.ui.removeOpen === ex.slotId;
   const subOpen = App.ui.substituteOpen === ex.slotId;
+  const mergeClass = [!isGroupStart ? "merge-top" : "", !isGroupEnd ? "merge-bottom" : ""].filter(Boolean).join(" ");
   return `
-    <div class="card exercise" data-slot="${ex.slotId}">
+    <div class="card exercise ${mergeClass}" data-slot="${ex.slotId}">
       <div class="exercise-header">
         <div class="reorder-btns">
           <button data-action="move-up" data-slot="${ex.slotId}" ${workout.finished ? "disabled" : ""}>▲</button>
