@@ -1,4 +1,6 @@
-const App = { ui: {} };
+// updateAvailable lives outside App.ui (which resets on every hashchange)
+// since it needs to persist across navigation until the user reloads.
+const App = { ui: {}, updateAvailable: false };
 
 const MUSCLE_GROUPS = [
   "Chest", "Back", "Shoulders", "Biceps", "Triceps",
@@ -819,6 +821,12 @@ function renderSettings(container) {
   const exercises = Store.getExercises().sort((a, b) => a.name.localeCompare(b.name));
 
   container.innerHTML = `
+    ${App.updateAvailable ? `
+      <div class="card update-banner">
+        <p>A new version of this app is available.</p>
+        <button class="btn primary" data-action="reload-app">Refresh Now</button>
+      </div>
+    ` : ""}
     <h2>Mesocycles</h2>
     ${mesos.length === 0 ? `<p class="muted">No mesocycles yet.</p>` : `
       <div class="meso-list">
@@ -878,6 +886,10 @@ const MESO_EDIT_FIELD_MAP = {
 };
 
 function handleSettingsAction(action, btn, view) {
+  if (action === "reload-app") {
+    location.reload();
+    return;
+  }
   if (action === "switch-active") {
     Store.setActiveMesocycle(btn.dataset.id);
   } else if (action === "create-meso") {
@@ -1007,6 +1019,17 @@ window.addEventListener("DOMContentLoaded", () => {
   if (!location.hash) location.hash = "#/today";
   renderCurrentView();
   if ("serviceWorker" in navigator) {
+    // A controllerchange with no prior controller is just this page's first
+    // ever activation (nothing to tell the user about). One that happens
+    // *after* a controller already existed means a newly-deployed service
+    // worker just took over from an older one while this page was open —
+    // that's the "new version available" signal the Settings banner shows.
+    const hadController = !!navigator.serviceWorker.controller;
     navigator.serviceWorker.register("sw.js").catch(() => {});
+    navigator.serviceWorker.addEventListener("controllerchange", () => {
+      if (!hadController) return;
+      App.updateAvailable = true;
+      if (currentRoute() === "settings") renderCurrentView();
+    });
   }
 });

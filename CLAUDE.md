@@ -82,6 +82,20 @@ twice before. A `scripts/hooks/pre-commit` hook enforces this (run once per
 clone: `git config core.hooksPath scripts/hooks`) and blocks a commit that
 changes a cached asset without a `CACHE_NAME` bump.
 
+Even with that bump, GitHub Pages itself caches `sw.js` for 10 minutes
+(`Cache-Control: max-age=600`, not something this repo can override), so an
+installed instance can still take a while to even notice a new version
+exists. `App.updateAvailable` (`js/app.js`) tracks this: the `DOMContentLoaded`
+handler records whether a service worker was already controlling the page
+before registering, and if a *later* `controllerchange` fires (a newly
+activated worker taking over from that one, not the page's own first-ever
+activation), it sets the flag and — only if the user is on `#/settings` —
+re-renders to show it immediately; otherwise it's picked up next time they
+navigate there. `renderSettings` shows a banner with a "Refresh Now" button
+(`reload-app` action, a plain `location.reload()`) when the flag is set.
+This is deliberately surfaced only on `#/settings`, not globally, so it
+never interrupts someone mid-workout on `#/today`.
+
 ## Architecture
 
 ### Script load order (`index.html`)

@@ -375,6 +375,16 @@ table.sets input { width: 100%; }
 }
 .active-meso { border-color: var(--accent); }
 
+.update-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex-wrap: wrap;
+  border-color: var(--accent);
+}
+.update-banner p { margin: 0; }
+
 .history-entry-header {
   display: flex;
   gap: 8px;
