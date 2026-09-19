@@ -272,8 +272,11 @@ label { display: block; margin-bottom: 8px; font-size: 13px; }
 .reorder-btns { display: flex; flex-direction: column; gap: 2px; }
 .reorder-btns button { padding: 2px 6px; font-size: 10px; }
 
-/* #/program marks a muscle-group boundary with a divider row. */
-tr.group-divider td { border-top: 1px solid var(--border); padding-top: 16px; }
+/* #/program marks a muscle-group boundary with a dedicated empty spacer
+   row (not by padding a real row's cells - that stretched/re-centered the
+   short .slot-actions cell against the taller Exercise cell and threw its
+   buttons out of alignment with the rest of that row). */
+.group-divider-row td { border-top: 1px solid var(--border); padding: 0; height: 16px; }
 
 /* #/today instead merges consecutive same-group exercise cards into one
    unbroken block — no border/gap between them — so a group boundary reads

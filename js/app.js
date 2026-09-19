@@ -643,12 +643,16 @@ function renderDayCard(meso, day, idx) {
         <tbody>
           ${(() => {
             let prevGroup = null;
-            return sortedExercises.map((slot) => {
+            const rows = [];
+            sortedExercises.forEach((slot) => {
               const group = getExerciseMuscleGroup(slot.exerciseId);
-              const dividerBefore = prevGroup !== null && group !== prevGroup;
+              if (prevGroup !== null && group !== prevGroup) {
+                rows.push(`<tr class="group-divider-row"><td colspan="5"></td></tr>`);
+              }
               prevGroup = group;
-              return renderSlotRow(day, slot, dividerBefore);
-            }).join("");
+              rows.push(renderSlotRow(day, slot));
+            });
+            return rows.join("");
           })()}
         </tbody>
       </table>
@@ -659,9 +663,9 @@ function renderDayCard(meso, day, idx) {
   `;
 }
 
-function renderSlotRow(day, slot, dividerBefore) {
+function renderSlotRow(day, slot) {
   const exercise = Store.getExercises().find((e) => e.id === slot.exerciseId);
-  return `<tr data-slot="${slot.id}" data-day="${day.id}" class="${dividerBefore ? "group-divider" : ""}">
+  return `<tr data-slot="${slot.id}" data-day="${day.id}">
     <td>
       ${renderMuscleTag((exercise && exercise.muscleGroup) || "Other")}
       <div>${escapeHtml(exercise ? exercise.name : "(unknown)")}</div>
