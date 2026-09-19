@@ -38,16 +38,25 @@ function mesocycleStartWeekday(mesocycle) {
   return jsDateToWeekdayIndex(parseLocalDate(mesocycle.startDate));
 }
 
+// A day template's weekday offset (0 = the mesocycle's start weekday, 1 =
+// the next day, ... wrapping at 7) is what pins it to a specific weekday,
+// allowing gaps (rest days) between training days. Mesocycles created
+// before this field existed only ever had days packed consecutively from
+// offset 0 in `order`, so `order` is exactly the right fallback — no data
+// migration needed.
+function getDayWeekdayOffset(day) {
+  return day.weekdayOffset ?? day.order ?? 0;
+}
+
 // Resolve which day template (if any) trains on `date`, given a mesocycle's
-// startDate (whose weekday anchors day[0]) and its ordered `days` array.
-// Returns the day template object, or null if `date` is a rest day.
+// startDate (whose weekday anchors offset 0) and each day's own
+// weekdayOffset. Returns the day template object, or null if `date` is a
+// rest day (no day template claims that offset).
 function resolveDayForDate(mesocycle, date) {
   if (!mesocycle || !mesocycle.days || mesocycle.days.length === 0) return null;
   const weekday = jsDateToWeekdayIndex(date);
   const offset = (weekday - mesocycleStartWeekday(mesocycle) + 7) % 7;
-  if (offset >= mesocycle.days.length) return null;
-  const sorted = [...mesocycle.days].sort((a, b) => a.order - b.order);
-  return sorted[offset] || null;
+  return mesocycle.days.find((d) => getDayWeekdayOffset(d) === offset) || null;
 }
 
 const WEEKDAY_LABELS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];

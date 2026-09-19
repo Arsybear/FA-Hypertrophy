@@ -601,38 +601,43 @@ function handleTodayChange(target) {
 function renderProgram(container) {
   const meso = Store.getActiveMesocycle();
   if (!meso) { container.innerHTML = emptyMesoState(); return; }
-  const sortedDays = [...meso.days].sort((a, b) => a.order - b.order);
+  const sortedDays = [...meso.days].sort((a, b) => getDayWeekdayOffset(a) - getDayWeekdayOffset(b));
+  const usedOffsets = new Set(meso.days.map((d) => getDayWeekdayOffset(d)));
+  const availableOffsets = [0, 1, 2, 3, 4, 5, 6].filter((i) => !usedOffsets.has(i));
 
   container.innerHTML = `
     <h2>${escapeHtml(meso.name)}</h2>
     <p class="muted">Start day: ${WEEKDAY_LABELS[mesocycleStartWeekday(meso)]} (${meso.startDate})</p>
-    ${sortedDays.map((day, idx) => renderDayCard(meso, day, idx)).join("")}
+    ${sortedDays.map((day) => renderDayCard(meso, day)).join("")}
     <div class="add-exercise-area">
       ${App.ui.addDayOpen
         ? `<div class="inline-form">
              <input type="text" data-role="new-day-name" placeholder="Day name (e.g. Push)">
+             <label>Trains on
+               <select data-role="new-day-weekday">
+                 ${availableOffsets.map((i) => `<option value="${i}">${WEEKDAY_LABELS[(mesocycleStartWeekday(meso) + i) % 7]}</option>`).join("")}
+               </select>
+             </label>
              <div class="form-actions">
                <button data-action="confirm-add-day">Add Day</button>
                <button data-action="cancel-add-day">Cancel</button>
              </div>
            </div>`
-        : `<button class="btn" data-action="open-add-day">+ Add Day</button>`}
+        : availableOffsets.length === 0
+          ? `<p class="muted">No more days can be added — every weekday is already scheduled.</p>`
+          : `<button class="btn" data-action="open-add-day">+ Add Day</button>`}
     </div>
   `;
 }
 
-function renderDayCard(meso, day, idx) {
-  const weekday = WEEKDAY_LABELS[(mesocycleStartWeekday(meso) + idx) % 7];
+function renderDayCard(meso, day) {
+  const weekday = WEEKDAY_LABELS[(mesocycleStartWeekday(meso) + getDayWeekdayOffset(day)) % 7];
   const sortedExercises = [...day.exercises].sort((a, b) => a.order - b.order);
   const removeConfirm = App.ui.removeDayConfirm === day.id;
   const addExOpen = App.ui.addExerciseToDay === day.id;
   return `
     <div class="card day-card" data-day="${day.id}">
       <div class="day-header">
-        <div class="reorder-btns">
-          <button data-action="move-day-up" data-day="${day.id}">▲</button>
-          <button data-action="move-day-down" data-day="${day.id}">▼</button>
-        </div>
         <strong>${escapeHtml(day.name)}</strong>
         <span class="muted">${weekday}</span>
         ${removeConfirm
@@ -719,9 +724,7 @@ function handleProgramAction(action, btn, view) {
   const dayId = btn.dataset.day;
   const slotId = btn.dataset.slot;
 
-  if (action === "move-day-up" || action === "move-day-down") {
-    Store.reorderDay(meso.id, dayId, action === "move-day-up" ? -1 : 1);
-  } else if (action === "open-remove-day") {
+  if (action === "open-remove-day") {
     App.ui.removeDayConfirm = dayId;
   } else if (action === "cancel-remove-day") {
     App.ui.removeDayConfirm = null;
@@ -754,7 +757,8 @@ function handleProgramAction(action, btn, view) {
     App.ui.addDayOpen = false;
   } else if (action === "confirm-add-day") {
     const name = view.querySelector('input[data-role="new-day-name"]').value.trim();
-    if (name) Store.addDay(meso.id, name);
+    const weekdaySelect = view.querySelector('select[data-role="new-day-weekday"]');
+    if (name && weekdaySelect) Store.addDay(meso.id, name, Number(weekdaySelect.value));
     App.ui.addDayOpen = false;
   }
   renderCurrentView();

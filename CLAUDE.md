@@ -150,11 +150,22 @@ two can never disagree (an earlier version had one; it was removed because a
 manually-set weekday could silently mismatch the real calendar date).
 `resolveDayForDate(mesocycle, date)` computes
 `offset = (weekday - mesocycleStartWeekday(mesocycle) + 7) % 7` and returns
-`days[offset]` (sorted by `order`) or `null` for a rest day. There is no
-"current day" pointer to advance — editing a mesocycle's `startDate`
-immediately reshuffles which weekday maps to which template, wrapping past
-Sunday back to Monday. This is why "finish workout" doesn't need to touch
-any schedule state.
+whichever day template's own `weekdayOffset` (0-6, set once at creation via
+the "Trains on" picker in `#/program`'s add-day form, and never edited
+afterward — remove and re-add a day to change it) equals that offset, or
+`null` for a rest day if none does. Day templates don't need to occupy
+consecutive offsets — leaving a gap between two `weekdayOffset`s is exactly
+how a deliberate rest day between training days (e.g. Monday/Tuesday/[rest
+Wednesday]/Thursday) is expressed; `#/program`'s add-day weekday dropdown
+only offers offsets no existing day already claims. Mesocycles created
+before this field existed only have the old `order` field (always
+sequential from 0, since gaps were impossible then); `getDayWeekdayOffset(day)`
+(`js/schedule.js`) — `day.weekdayOffset ?? day.order ?? 0` — is the only
+place that needs to know about that fallback. There is no "current day"
+pointer to advance — editing a mesocycle's `startDate` immediately
+reshuffles which weekday maps to which template, wrapping past Sunday back
+to Monday. This is why "finish workout" doesn't need to touch any schedule
+state.
 
 ### Lazy workout generation + progression (`js/app.js` `generateWorkout`, `js/progression.js`)
 

@@ -80,11 +80,11 @@ const Store = {
     Store.saveMesocycles(list);
     return meso;
   },
-  addDay(mesoId, name) {
+  addDay(mesoId, name, weekdayOffset) {
     const list = Store.getMesocycles();
     const meso = list.find((m) => m.id === mesoId);
     if (!meso) return null;
-    const day = { id: uid(), name, order: meso.days.length, exercises: [] };
+    const day = { id: uid(), name, weekdayOffset, exercises: [] };
     meso.days.push(day);
     Store.saveMesocycles(list);
     return day;
@@ -94,18 +94,6 @@ const Store = {
     const meso = list.find((m) => m.id === mesoId);
     if (!meso) return;
     meso.days = meso.days.filter((d) => d.id !== dayId);
-    meso.days.forEach((d, i) => (d.order = i));
-    Store.saveMesocycles(list);
-  },
-  reorderDay(mesoId, dayId, direction) {
-    const list = Store.getMesocycles();
-    const meso = list.find((m) => m.id === mesoId);
-    if (!meso) return;
-    const sorted = [...meso.days].sort((a, b) => a.order - b.order);
-    const idx = sorted.findIndex((d) => d.id === dayId);
-    const swapIdx = idx + direction;
-    if (idx < 0 || swapIdx < 0 || swapIdx >= sorted.length) return;
-    [sorted[idx].order, sorted[swapIdx].order] = [sorted[swapIdx].order, sorted[idx].order];
     Store.saveMesocycles(list);
   },
   addExerciseSlot(mesoId, dayId, slot) {
