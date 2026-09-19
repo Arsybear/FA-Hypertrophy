@@ -274,8 +274,8 @@ label { display: block; margin-bottom: 8px; font-size: 13px; }
 
 /* Marks a muscle-group boundary between consecutive exercises — omitted
    between same-group exercises so they read as one visual cluster. */
-.muscle-divider { border-top: 1px solid var(--border); margin: 4px 0 12px; }
-tr.group-divider td { border-top: 1px solid var(--border); padding-top: 12px; }
+.muscle-divider { border-top: 1px solid var(--border); margin: 12px 0 20px; }
+tr.group-divider td { border-top: 1px solid var(--border); padding-top: 16px; }
 
 .exercise-actions { display: flex; gap: 6px; margin: 8px 0; flex-wrap: wrap; }
 
