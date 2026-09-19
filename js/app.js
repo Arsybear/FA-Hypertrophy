@@ -676,12 +676,14 @@ function renderSlotRow(day, slot) {
       <input type="number" min="1" value="${slot.repRangeMax}" class="rep-input" data-role="slot-rep-max" data-day="${day.id}" data-slot="${slot.id}">
     </td>
     <td><input type="number" step="0.5" value="${slot.weightIncrementPct ?? DEFAULT_INCREMENT_PCT}" class="rep-input" data-role="slot-increment" data-day="${day.id}" data-slot="${slot.id}"></td>
-    <td class="slot-actions">
-      <span class="slot-reorder">
-        <button data-action="move-slot-up" data-day="${day.id}" data-slot="${slot.id}">▲</button>
-        <button data-action="move-slot-down" data-day="${day.id}" data-slot="${slot.id}">▼</button>
-      </span>
-      <button class="btn-danger" data-action="remove-slot" data-day="${day.id}" data-slot="${slot.id}">✕</button>
+    <td>
+      <div class="slot-actions">
+        <span class="slot-reorder">
+          <button data-action="move-slot-up" data-day="${day.id}" data-slot="${slot.id}">▲</button>
+          <button data-action="move-slot-down" data-day="${day.id}" data-slot="${slot.id}">▼</button>
+        </span>
+        <button class="btn-danger" data-action="remove-slot" data-day="${day.id}" data-slot="${slot.id}">✕</button>
+      </div>
     </td>
   </tr>`;
 }
