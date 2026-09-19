@@ -288,13 +288,21 @@ function renderToday(container) {
   const sortedExercises = [...workout.exercises].sort((a, b) => a.order - b.order);
   const historyEx = App.ui.historyOpen ? workout.exercises.find((e) => e.slotId === App.ui.historyOpen) : null;
 
+  let prevGroup = null;
+  const exerciseBlocksHtml = sortedExercises.map((ex) => {
+    const group = getExerciseMuscleGroup(ex.exerciseId);
+    const divider = prevGroup !== null && group !== prevGroup ? `<div class="muscle-divider"></div>` : "";
+    prevGroup = group;
+    return divider + renderExerciseBlock(workout, ex);
+  }).join("");
+
   container.innerHTML = `
     ${renderDateNav(meso, dateIso, isToday)}
     <div class="workout-header">
       <h2>${escapeHtml(workout.dayName)}</h2>
       <p class="muted">${workout.finished ? "Finished" : ""}</p>
     </div>
-    ${sortedExercises.map((ex) => renderExerciseBlock(workout, ex)).join("")}
+    ${exerciseBlocksHtml}
     <div class="add-exercise-area">
       ${App.ui.addOpen ? renderAddExerciseForm() : `<button class="btn" data-action="open-add-exercise">+ Add Exercise</button>`}
     </div>
@@ -633,7 +641,15 @@ function renderDayCard(meso, day, idx) {
       <table class="slots">
         <thead><tr><th>Exercise</th><th>Sets</th><th>Reps</th><th>+%</th><th></th></tr></thead>
         <tbody>
-          ${sortedExercises.map((slot) => renderSlotRow(day, slot)).join("")}
+          ${(() => {
+            let prevGroup = null;
+            return sortedExercises.map((slot) => {
+              const group = getExerciseMuscleGroup(slot.exerciseId);
+              const dividerBefore = prevGroup !== null && group !== prevGroup;
+              prevGroup = group;
+              return renderSlotRow(day, slot, dividerBefore);
+            }).join("");
+          })()}
         </tbody>
       </table>
       ${addExOpen
@@ -643,9 +659,9 @@ function renderDayCard(meso, day, idx) {
   `;
 }
 
-function renderSlotRow(day, slot) {
+function renderSlotRow(day, slot, dividerBefore) {
   const exercise = Store.getExercises().find((e) => e.id === slot.exerciseId);
-  return `<tr data-slot="${slot.id}" data-day="${day.id}">
+  return `<tr data-slot="${slot.id}" data-day="${day.id}" class="${dividerBefore ? "group-divider" : ""}">
     <td>
       ${renderMuscleTag((exercise && exercise.muscleGroup) || "Other")}
       <div>${escapeHtml(exercise ? exercise.name : "(unknown)")}</div>
