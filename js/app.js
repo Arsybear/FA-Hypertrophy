@@ -647,7 +647,7 @@ function renderDayCard(meso, day, idx) {
             sortedExercises.forEach((slot) => {
               const group = getExerciseMuscleGroup(slot.exerciseId);
               if (prevGroup !== null && group !== prevGroup) {
-                rows.push(`<tr class="group-divider-row"><td colspan="5"></td></tr>`);
+                rows.push(`<tr class="group-divider-row"><td colspan="5"><div class="muscle-divider-line"></div></td></tr>`);
               }
               prevGroup = group;
               rows.push(renderSlotRow(day, slot));
