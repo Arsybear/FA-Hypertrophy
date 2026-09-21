@@ -188,10 +188,33 @@ the workout's `exercises[]` and fills each slot's `sets[]` via
 `buildPrefilledSets`, which finds the most recent *finished* workout for the
 same `dayId` + `slotId` (falling back to `exerciseId`, e.g. after a one-off
 substitution) and applies double progression (`nextSet` in
-`js/progression.js`): hit the top of the rep range → bump weight by
-`weightIncrementPct`% (rounded to the nearest `PLATE_INCREMENT`, 2.5lb) and
-reset to the bottom; otherwise +1 rep at the same weight. No prior history →
-blank/unprefilled (manual baseline).
+`js/progression.js`). The rep count that triggers a weight bump depends on
+the previous set's weight, classified by `weightClass()` purely from that
+number (`LIGHT_WEIGHT_THRESHOLD` 45lb, `HEAVY_WEIGHT_THRESHOLD` 135lb — no
+per-exercise config): light/medium still require hitting the literal top of
+the rep range, but heavy exercises trigger at the range's midpoint
+(`weightBumpTriggerReps`) — one more rep at a heavy weight is
+disproportionately harder than at a light one, so a smaller, more frequent
+weight bump is the smoother way up rather than forcing a full rep-range
+climb every time. Below that trigger: +1 rep at the same weight, capped at
+`repRangeMax`. At the trigger: weight goes up by `weightIncrementPct`%,
+rounded to the nearest `PLATE_INCREMENT` (2.5lb) — and floored to *at least*
+one plate increment even if the raw percentage of a light weight would round
+back down to the same number (e.g. 20lb at 2.5% rounds to 20, not 20.5),
+which would otherwise silently stall that exercise's progression forever.
+`weightIncrementPct` is defined as the week-over-week weight increase at a
+*constant* rep count, so the new rep target after a bump is **not** reset to
+`repRangeMin` — that would read as an accidental deload (95lb×12 → 97.5lb×8
+is a much easier set than 95×12, even though the weight went up). Instead
+it's computed via `equivalentReps` (same Epley/Brzycki-averaged
+effort-equivalence estimate `applyEquivalentReps` uses for same-workout
+manual weight edits, see below), clamped to `[repRangeMin, repRangeMax]` as
+a safety bound — the upper bound essentially never binds (a heavier weight
+at equal effort always implies fewer reps than what was just lifted), the
+lower bound is what actually protects against a degenerate case (a
+plate-increment-floored jump on a very light weight producing a nonsensical
+or negative estimate). No prior history → blank/unprefilled (manual
+baseline).
 
 A **finished** workout's `exercises[]` snapshot is frozen — later template
 edits never rewrite it, so history stays accurate to what was actually
