@@ -141,9 +141,25 @@ function reconcileWorkoutWithTemplate(workout, dayTemplate) {
       Object.assign(existing, { order: idx, repRangeMin: slot.repRangeMin, repRangeMax: slot.repRangeMax, weightIncrementPct: pct });
       changed = true;
     }
+    // Migrate sets from before predictions became placeholder-only: those
+    // wrote the prediction into weight/reps and flagged it `prefilled`. An
+    // untouched one is cleared back to blank (the prediction survives in
+    // baseWeight/baseReps, now shown as the placeholder). New sets never have
+    // the `prefilled` key, so this only ever runs once per old set.
+    existing.sets.forEach((s) => {
+      if (!("prefilled" in s)) return;
+      if (!s.isLogged) {
+        if (s.prefilled && s.baseWeight == null) { s.baseWeight = s.weight; s.baseReps = s.reps; }
+        s.weight = null;
+        s.reps = null;
+      }
+      delete s.prefilled;
+      delete s.repsManual;
+      changed = true;
+    });
     if (existing.sets.length < slot.targetSets) {
       for (let i = existing.sets.length; i < slot.targetSets; i++) {
-        existing.sets.push({ setIndex: i, weight: null, reps: null, baseWeight: null, baseReps: null, prefilled: false, isLogged: false, repsManual: false });
+        existing.sets.push(blankSet(i));
       }
       changed = true;
     } else if (existing.sets.length > slot.targetSets) {
@@ -348,12 +364,10 @@ function renderExerciseBlock(workout, ex, isGroupStart, isGroupEnd) {
           ${ex.sets.map((s, i) => `
             <tr>
               <td>${i + 1}</td>
-              <td><input type="number" step="0.5" inputmode="decimal" placeholder="wt"
-                class="${s.prefilled && !s.isLogged ? "prefilled" : ""}"
+              <td><input type="number" step="0.5" inputmode="decimal" placeholder="${setWeightHint(s)}"
                 data-field="weight" data-slot="${ex.slotId}" data-set="${i}"
                 value="${fmtNum(s.weight)}" ${workout.finished ? "disabled" : ""}></td>
-              <td><input type="number" inputmode="numeric" placeholder="reps"
-                class="${s.prefilled && !s.isLogged ? "prefilled" : ""}"
+              <td><input type="number" inputmode="numeric" placeholder="${setRepsHint(ex, s)}"
                 data-field="reps" data-slot="${ex.slotId}" data-set="${i}"
                 value="${fmtNum(s.reps)}" ${workout.finished ? "disabled" : ""}></td>
             </tr>`).join("")}
@@ -375,7 +389,7 @@ function renderHistorySheet(ex) {
         ? `<p class="muted">No history yet.</p>`
         : rows.map((r) => `<div class="history-row">
             <span class="muted">${r.date} · ${escapeHtml(r.dayName)}</span>
-            ${r.sets.map((s) => s.weight != null ? `${s.weight}×${s.reps}` : "—").join(", ")}
+            ${r.sets.map((s) => isCompleteSet(s) ? `${s.weight}×${s.reps}` : "—").join(", ")}
           </div>`).join("")}
     </div>
   </div>`;
@@ -518,7 +532,7 @@ function handleTodayAction(action, btn, view) {
       workout.exercises.push({
         slotId: newSlotId, exerciseId: exercise.id, exerciseName: exercise.name,
         order: workout.exercises.length, repRangeMin, repRangeMax, weightIncrementPct,
-        sets: Array.from({ length: targetSets }, (_, i) => ({ setIndex: i, weight: null, reps: null, prefilled: false, isLogged: false })),
+        sets: Array.from({ length: targetSets }, (_, i) => blankSet(i)),
       });
       Store.updateWorkout(workout.id, { exercises: workout.exercises });
     }
@@ -531,27 +545,32 @@ function handleTodayAction(action, btn, view) {
   renderCurrentView();
 }
 
-// Recalculates a set's rep target to the estimated equivalent-effort value
-// at newWeight (relative to its fixed baseWeight/baseReps prefill anchor —
-// see buildPrefilledSets), and patches the live reps input directly, since
-// handleTodayChange deliberately avoids a full re-render (see below). Skips
-// a set whose reps the user already typed by hand (repsManual) — a manual
-// override should stick even if the weight on that same set is edited again
-// afterward, same as an already-logged sibling set is left alone. Clamped to
-// the exercise's rep range, same as nextSet.
-function applyEquivalentReps(set, newWeight, ex, index) {
-  if (set.repsManual) return;
-  const estimate = equivalentReps(set.baseWeight, set.baseReps, newWeight);
-  if (estimate == null) return;
-  const reps = Math.min(Math.max(estimate, ex.repRangeMin), ex.repRangeMax);
-  set.reps = reps;
+// Placeholder text for a set's inputs: the double-progression prediction
+// (baseWeight/baseReps, see buildPrefilledSets) when there is one, else the
+// generic "wt"/"reps" hint. Predictions are never written into the inputs'
+// values — only what the user typed is — so a glance at the table shows
+// which sets are actually done. Once a weight is in (typed or carried), the
+// reps hint becomes the estimated rep target at that weight, clamped to the
+// exercise's rep range, same as nextSet.
+function setWeightHint(s) {
+  return s.baseWeight ?? "wt";
+}
+
+function setRepsHint(ex, s) {
+  if (s.weight != null) {
+    const estimate = equivalentReps(s.baseWeight, s.baseReps, s.weight);
+    if (estimate != null) return Math.min(Math.max(estimate, ex.repRangeMin), ex.repRangeMax);
+  }
+  return s.baseReps ?? "reps";
+}
+
+// Patches a set's live reps placeholder directly, since handleTodayChange
+// deliberately avoids a full re-render (see below).
+function refreshRepsHint(ex, index) {
   const repsInput = document.querySelector(
     `input[data-field="reps"][data-slot="${cssEscape(ex.slotId)}"][data-set="${index}"]`
   );
-  if (repsInput) {
-    repsInput.value = reps;
-    repsInput.classList.remove("prefilled");
-  }
+  if (repsInput) repsInput.placeholder = setRepsHint(ex, ex.sets[index]);
 }
 
 function handleTodayChange(target) {
@@ -566,36 +585,34 @@ function handleTodayChange(target) {
   const raw = target.value;
   const num = raw === "" ? null : parseFloat(raw);
   set[field] = Number.isNaN(num) ? null : num;
-  set.isLogged = true;
-  set.prefilled = false;
-  if (field === "reps") set.repsManual = true;
+  set.isLogged = set.weight != null || set.reps != null;
 
   // Once a weight is entered, carry it into any other set of this exercise
-  // the user hasn't touched yet (still prefilled/blank) — same weight across
-  // all sets is the common case, and it's still freely editable per set.
-  if (field === "weight" && num != null) {
+  // the user hasn't touched yet — but only one whose predicted weight matched
+  // this set's: if the prediction had every set at the same weight, same
+  // weight across all sets is the common case; if it had deliberately
+  // different weights (e.g. last week's drop set), those should stick. With
+  // no prediction at all (baseline entry), every baseWeight is null, so the
+  // weight carries everywhere. Carried sets stay unlogged, so their weight
+  // keeps following later edits; reps are never carried, only re-hinted.
+  if (field === "weight" && set.weight != null) {
     ex.sets.forEach((s, i) => {
-      if (i === setIndex || s.isLogged) return;
-      s.weight = num;
-      s.prefilled = false;
+      if (i === setIndex || s.isLogged || s.baseWeight !== set.baseWeight) return;
+      s.weight = set.weight;
       const otherInput = document.querySelector(
         `input[data-field="weight"][data-slot="${cssEscape(slotId)}"][data-set="${i}"]`
       );
-      if (otherInput) {
-        otherInput.value = num;
-        otherInput.classList.remove("prefilled");
-      }
-      applyEquivalentReps(s, num, ex, i);
+      if (otherInput) otherInput.value = set.weight;
+      refreshRepsHint(ex, i);
     });
-    applyEquivalentReps(set, num, ex, setIndex);
   }
+  if (field === "weight") refreshRepsHint(ex, setIndex);
 
   Store.updateWorkout(workout.id, { exercises: workout.exercises });
   // No renderCurrentView() here: a full re-render would replace the input
   // DOM nodes out from under the user's next click/tab while filling in a
   // table of set rows, silently dropping focus (and whatever they typed
-  // next). Only the greyed "prefilled" styling needs to change.
-  target.classList.remove("prefilled");
+  // next).
 }
 
 /* ---------------- PROGRAM ---------------- */
@@ -803,7 +820,7 @@ function renderHistory(container) {
           ${[...w.exercises].sort((a, b) => a.order - b.order).map((ex) => `
             <div class="history-exercise">
               <span>${renderMuscleTag(getExerciseMuscleGroup(ex.exerciseId))} <strong>${escapeHtml(ex.exerciseName)}</strong></span>
-              <span>${ex.sets.map((s) => s.weight != null ? `${s.weight}×${s.reps}` : "—").join(", ")}</span>
+              <span>${ex.sets.map((s) => isCompleteSet(s) ? `${s.weight}×${s.reps}` : "—").join(", ")}</span>
             </div>`).join("")}
         </div>` : ""}
       </div>`;

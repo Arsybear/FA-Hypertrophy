@@ -184,11 +184,22 @@ clicking one is an ordinary route change (closes the panel via the usual
 resolves that date's workout instance, generating one on first lookup for
 that date (never for a date after today, so a future day can't be
 prematurely snapshotted). Generation snapshots the day template's slots into
-the workout's `exercises[]` and fills each slot's `sets[]` via
-`buildPrefilledSets`, which finds the most recent *finished* workout for the
-same `dayId` + `slotId` (falling back to `exerciseId`, e.g. after a one-off
-substitution) and applies double progression (`nextSet` in
-`js/progression.js`). The rep count that triggers a weight bump depends on
+the workout's `exercises[]` and builds each slot's `sets[]` via
+`buildPrefilledSets`, which finds, **per set index**, the most recent
+*finished* workout for the same `dayId` + `slotId` (falling back to
+`exerciseId`, e.g. after a one-off substitution) where that set was actually
+logged (`findLastLoggedSet`), and applies double progression (`nextSet` in
+`js/progression.js`). The prediction is stored only in the set's
+`baseWeight`/`baseReps` and shown as the inputs' **placeholder**
+(`setWeightHint`/`setRepsHint` in `js/app.js`) — never written into
+`weight`/`reps`, which hold only what the user typed. That's deliberate: a
+filled-in prediction looked like a logged set, so mid-workout you couldn't
+tell what was done, and finishing silently saved untouched predictions as
+lifted. A consequence is that a skipped set is saved blank, which is why the
+lookup is per set index (a skipped set falls back to an older workout
+instead of losing its prediction). Unfinished workouts from before this
+change carry a `prefilled` key on each set; `reconcileWorkoutWithTemplate`
+migrates those once (clears untouched values back to blank). The rep count that triggers a weight bump depends on
 the previous set's weight, classified by `weightClass()` purely from that
 number (`LIGHT_WEIGHT_THRESHOLD` 45lb, `HEAVY_WEIGHT_THRESHOLD` 135lb — no
 per-exercise config): light/medium still require hitting the literal top of
@@ -206,8 +217,8 @@ which would otherwise silently stall that exercise's progression forever.
 *constant* rep count, so the new rep target after a bump is **not** reset to
 `repRangeMin` — that would read as an accidental deload (95lb×12 → 97.5lb×8
 is a much easier set than 95×12, even though the weight went up). Instead
-it's computed via `equivalentReps` (the same estimate `applyEquivalentReps`
-uses for same-workout manual weight edits, see below): one rep lost per
+it's computed via `equivalentReps` (the same estimate `setRepsHint` uses to
+re-hint reps after a same-workout weight edit, see below): one rep lost per
 `pctPerRep(baseWeight)`% of load increase — 15% for light weights, 2.5% for
 heavy, linearly interpolated by weight in between. The light rate is fitted
 to real week-over-week progressions (17.5×9 → 20×8, 15×8 → 20×6): light
@@ -216,7 +227,7 @@ far fewer reps than the same percentage on a heavy lift. Don't swap back to
 a single 1RM formula (Epley/Brzycki) — that was the previous version, and
 because it assumes one rep/weight curve for every exercise it turned
 15×9 → 20lb into 20×1. The medium band is interpolated, not fitted to data.
-Both call sites clamp the estimate to `[repRangeMin, repRangeMax]`. No prior history → blank/unprefilled (manual
+Both call sites clamp the estimate to `[repRangeMin, repRangeMax]`. No prior history → plain "wt"/"reps" placeholders (manual
 baseline).
 
 A **finished** workout's `exercises[]` snapshot is frozen — later template
@@ -232,12 +243,17 @@ finished workout via "Reopen Workout" also makes it eligible for
 reconciliation again.
 
 Separately, `handleTodayChange` in `js/app.js` also carries a just-entered
-**weight** into every other not-yet-logged set of the same exercise (same
-weight across all sets is the common case) — both in the data model and by
-writing directly into those other `<input>` elements, since this handler
-intentionally avoids `renderCurrentView()` (see below). A set that the user
-has already touched (`isLogged: true`) is left alone, so per-set overrides
-(e.g. a drop set) still stick.
+**weight** (as a real value, not a hint) into every other not-yet-logged set
+of the same exercise **whose predicted `baseWeight` equals the edited set's**
+— if the prediction had all sets at one weight, same weight across all sets
+is the common case; if it had deliberately different weights (last week's
+drop set), those stick. With no prediction, every `baseWeight` is `null`, so
+it carries everywhere. It writes both the data model and those other
+`<input>` elements directly, since this handler intentionally avoids
+`renderCurrentView()` (see below), and refreshes their reps placeholder
+(`refreshRepsHint`) to the rep estimate at the new weight. Reps are never
+carried. A set that the user has already typed into (`isLogged: true`) is
+left alone.
 
 ### Edit scope: "this workout only" vs "all future"
 
