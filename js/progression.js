@@ -104,7 +104,7 @@ function findLastLoggedSet(workouts, dayId, slotId, exerciseId, setIndex, before
 }
 
 function blankSet(setIndex) {
-  return { setIndex, weight: null, reps: null, baseWeight: null, baseReps: null, isLogged: false };
+  return { setIndex, weight: null, reps: null, baseWeight: null, baseReps: null, isLogged: false, done: false };
 }
 
 // Build a slot's sets for a new workout. weight/reps stay null — they only

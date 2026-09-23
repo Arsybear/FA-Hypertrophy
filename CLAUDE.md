@@ -255,6 +255,20 @@ it carries everywhere. It writes both the data model and those other
 carried. A set that the user has already typed into (`isLogged: true`) is
 left alone.
 
+Each set row also has a "done" checkbox (`set.done`, handled by
+`handleSetDoneChange`). Ticking it fills any still-empty box from its
+placeholder hint — one tap logs a set done exactly as predicted — then locks
+both inputs (`disabled`) until unticked; if a box has no numeric hint either,
+the tick doesn't stick and focus moves to that box. When every set is done
+the card gets `.complete` (faint `--success` tint, ✓ after the name). `done`
+is a tracking aid only — progression/history still go by `isCompleteSet`.
+`isSetDone()` treats any complete set on a *finished* workout as done, since
+workouts finished before this existed have no `done` flags; "Reopen
+Workout" persists that (sets `done` on every complete set) so reopened sets
+don't flip to unticked/unlocked. Unlike
+`handleTodayChange`, this handler does call `renderCurrentView()`: the
+no-re-render rule protects focus while typing, and a checkbox tap isn't.
+
 ### Edit scope: "this workout only" vs "all future"
 
 Add/remove/substitute-exercise actions on `#/today` present a scope choice.

@@ -320,9 +320,9 @@ function renderToday(container) {
       <p class="muted">${workout.finished ? "Finished" : ""}</p>
     </div>
     ${exerciseBlocksHtml}
-    <div class="add-exercise-area">
+    ${!workout.finished ? `<div class="add-exercise-area">
       ${App.ui.addOpen ? renderAddExerciseForm() : `<button class="btn" data-action="open-add-exercise">+ Add Exercise</button>`}
-    </div>
+    </div>` : ""}
     <div class="finish-area">
       ${workout.finished
         ? `<button class="btn secondary" data-action="reopen-workout">Reopen Workout</button>`
@@ -335,9 +335,12 @@ function renderToday(container) {
 function renderExerciseBlock(workout, ex, isGroupStart, isGroupEnd) {
   const removeOpen = App.ui.removeOpen === ex.slotId;
   const subOpen = App.ui.substituteOpen === ex.slotId;
-  const mergeClass = [!isGroupStart ? "merge-top" : "", !isGroupEnd ? "merge-bottom" : ""].filter(Boolean).join(" ");
+  const complete = ex.sets.length > 0 && ex.sets.every((s) => isSetDone(workout, s));
+  const cardClass = [
+    !isGroupStart ? "merge-top" : "", !isGroupEnd ? "merge-bottom" : "", complete ? "complete" : "",
+  ].filter(Boolean).join(" ");
   return `
-    <div class="card exercise ${mergeClass}" data-slot="${ex.slotId}">
+    <div class="card exercise ${cardClass}" data-slot="${ex.slotId}">
       <div class="exercise-header">
         <div class="reorder-btns">
           <button data-action="move-up" data-slot="${ex.slotId}" ${workout.finished ? "disabled" : ""}>▲</button>
@@ -345,7 +348,7 @@ function renderExerciseBlock(workout, ex, isGroupStart, isGroupEnd) {
         </div>
         <div class="ex-name-group">
           ${renderMuscleTag(getExerciseMuscleGroup(ex.exerciseId))}
-          <strong class="ex-name">${escapeHtml(ex.exerciseName)}</strong>
+          <strong class="ex-name">${escapeHtml(ex.exerciseName)}${complete ? `<span class="ex-done-mark" aria-label="completed">✓</span>` : ""}</strong>
         </div>
         <span class="rep-range muted">${ex.repRangeMin}-${ex.repRangeMax} reps</span>
       </div>
@@ -359,18 +362,25 @@ function renderExerciseBlock(workout, ex, isGroupStart, isGroupEnd) {
       ${removeOpen ? renderRemoveForm(ex) : ""}
       ${subOpen ? renderSubstituteForm(ex) : ""}
       <table class="sets">
-        <thead><tr><th>Set</th><th>Weight</th><th>Reps</th></tr></thead>
+        <thead><tr><th>Set</th><th>Weight</th><th>Reps</th><th class="set-done-col">✓</th></tr></thead>
         <tbody>
-          ${ex.sets.map((s, i) => `
+          ${ex.sets.map((s, i) => {
+            const done = isSetDone(workout, s);
+            const locked = workout.finished || done ? "disabled" : "";
+            return `
             <tr>
               <td>${i + 1}</td>
               <td><input type="number" step="0.5" inputmode="decimal" placeholder="${setWeightHint(s)}"
                 data-field="weight" data-slot="${ex.slotId}" data-set="${i}"
-                value="${fmtNum(s.weight)}" ${workout.finished ? "disabled" : ""}></td>
+                value="${fmtNum(s.weight)}" ${locked}></td>
               <td><input type="number" inputmode="numeric" placeholder="${setRepsHint(ex, s)}"
                 data-field="reps" data-slot="${ex.slotId}" data-set="${i}"
-                value="${fmtNum(s.reps)}" ${workout.finished ? "disabled" : ""}></td>
-            </tr>`).join("")}
+                value="${fmtNum(s.reps)}" ${locked}></td>
+              <td class="set-done-col"><input type="checkbox" data-role="set-done"
+                data-slot="${ex.slotId}" data-set="${i}" aria-label="Set ${i + 1} done"
+                ${done ? "checked" : ""} ${workout.finished ? "disabled" : ""}></td>
+            </tr>`;
+          }).join("")}
         </tbody>
       </table>
     </div>
@@ -540,7 +550,13 @@ function handleTodayAction(action, btn, view) {
   } else if (action === "finish-workout") {
     Store.finishWorkout(workout.id);
   } else if (action === "reopen-workout") {
-    Store.updateWorkout(workout.id, { finished: false, finishedAt: null });
+    // A finished workout shows every complete set as done (isSetDone), even
+    // ones never ticked (e.g. finished before the checkbox existed) — persist
+    // that on reopen so the sets don't suddenly read as unticked/unlocked.
+    workout.exercises.forEach((ex) => ex.sets.forEach((s) => {
+      if (isCompleteSet(s)) s.done = true;
+    }));
+    Store.updateWorkout(workout.id, { finished: false, finishedAt: null, exercises: workout.exercises });
   }
   renderCurrentView();
 }
@@ -562,6 +578,52 @@ function setRepsHint(ex, s) {
     if (estimate != null) return Math.min(Math.max(estimate, ex.repRangeMin), ex.repRangeMax);
   }
   return s.baseReps ?? "reps";
+}
+
+// Workouts finished before the done checkbox existed have no `done` flags,
+// so on a finished workout any complete set reads as done.
+function isSetDone(workout, s) {
+  return !!s.done || (workout.finished && isCompleteSet(s));
+}
+
+// Ticking a set's checkbox marks it done and locks its inputs. Any box still
+// empty accepts its placeholder hint (so a set done exactly as predicted is
+// one tap); if a box has no numeric hint either, the tick doesn't stick and
+// focus goes to that box. Unlike handleTodayChange this does re-render —
+// the no-re-render rule protects focus while typing, and a checkbox tap
+// isn't typing — so locks and the card's completed state update in one place.
+function handleSetDoneChange(target) {
+  const { workout } = getTodayContext();
+  if (!workout) return;
+  const slotId = target.dataset.slot;
+  const setIndex = Number(target.dataset.set);
+  const ex = workout.exercises.find((e) => e.slotId === slotId);
+  if (!ex) return;
+  const set = ex.sets[setIndex];
+  if (target.checked) {
+    if (set.weight == null && set.baseWeight != null) set.weight = set.baseWeight;
+    if (set.reps == null) {
+      const hint = setRepsHint(ex, set);
+      if (typeof hint === "number") set.reps = hint;
+    }
+    if (!isCompleteSet(set)) {
+      target.checked = false;
+      const emptyField = set.weight == null ? "weight" : "reps";
+      Store.updateWorkout(workout.id, { exercises: workout.exercises });
+      renderCurrentView();
+      const input = document.querySelector(
+        `input[data-field="${emptyField}"][data-slot="${cssEscape(slotId)}"][data-set="${setIndex}"]`
+      );
+      if (input) input.focus();
+      return;
+    }
+    set.done = true;
+    set.isLogged = true;
+  } else {
+    set.done = false;
+  }
+  Store.updateWorkout(workout.id, { exercises: workout.exercises });
+  renderCurrentView();
 }
 
 // Patches a set's live reps placeholder directly, since handleTodayChange
@@ -1020,7 +1082,8 @@ function handleNewNameTyped(inputEl) {
 function handleGlobalChange(e) {
   const t = e.target;
   const route = currentRoute();
-  if (route === "today" && t.matches("input[data-field]")) handleTodayChange(t);
+  if (route === "today" && t.matches('input[data-role="set-done"]')) handleSetDoneChange(t);
+  else if (route === "today" && t.matches("input[data-field]")) handleTodayChange(t);
   else if (route === "program" && t.matches('input[data-role^="slot-"]')) handleProgramChange(t);
   else if (route === "settings" && t.dataset.role === "new-meso-start-date") updateStartWeekdayHint(t, "new-meso-start-weekday-hint");
   else if (route === "settings" && t.matches('[data-role^="edit-"]')) handleSettingsChange(t);
