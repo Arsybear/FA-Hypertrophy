@@ -394,7 +394,7 @@ function renderExerciseBlock(workout, ex, isGroupStart, isGroupEnd) {
       ${removeOpen ? renderRemoveForm(ex) : ""}
       ${subOpen ? renderSubstituteForm(ex) : ""}
       <table class="sets">
-        <thead><tr><th>Set</th><th>Weight</th><th>Reps</th><th class="set-done-col">✓</th></tr></thead>
+        <thead><tr><th>Set</th><th>Weight</th><th>Reps</th><th class="set-done-col" aria-label="Done"></th></tr></thead>
         <tbody>
           ${ex.sets.map((s, i) => {
             const done = isSetDone(workout, s);
