@@ -141,6 +141,20 @@ const Store = {
     [sorted[idx].order, sorted[swapIdx].order] = [sorted[swapIdx].order, sorted[idx].order];
     Store.saveMesocycles(list);
   },
+  // Swaps two specific slots' order (not necessarily adjacent in the
+  // template) — #/today uses this so a swap of two neighbors in a workout
+  // instance swaps those same two in the template, even when a slot skipped
+  // for that workout sits between them.
+  swapExerciseSlotOrder(mesoId, dayId, slotIdA, slotIdB) {
+    const list = Store.getMesocycles();
+    const meso = list.find((m) => m.id === mesoId);
+    const day = meso && meso.days.find((d) => d.id === dayId);
+    const a = day && day.exercises.find((e) => e.id === slotIdA);
+    const b = day && day.exercises.find((e) => e.id === slotIdB);
+    if (!a || !b) return;
+    [a.order, b.order] = [b.order, a.order];
+    Store.saveMesocycles(list);
+  },
 
   // --- Workouts ---
   getWorkouts() {

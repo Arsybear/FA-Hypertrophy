@@ -198,7 +198,7 @@ tell what was done, and finishing silently saved untouched predictions as
 lifted. A consequence is that a skipped set is saved blank, which is why the
 lookup is per set index (a skipped set falls back to an older workout
 instead of losing its prediction). Unfinished workouts from before this
-change carry a `prefilled` key on each set; `reconcileWorkoutWithTemplate`
+change carry a `prefilled` key on each set; `migrateLegacyPrefill`
 migrates those once (clears untouched values back to blank). The rep count that triggers a weight bump depends on
 the previous set's weight, classified by `weightClass()` purely from that
 number (`LIGHT_WEIGHT_THRESHOLD` 45lb, `HEAVY_WEIGHT_THRESHOLD` 135lb — no
@@ -232,15 +232,18 @@ baseline).
 
 A **finished** workout's `exercises[]` snapshot is frozen — later template
 edits never rewrite it, so history stays accurate to what was actually
-logged. An **unfinished** one is not: every time `getTodayContext()` reads
-it, `reconcileWorkoutWithTemplate()` re-syncs it against the day template's
-current slots (added/removed exercises, reordered slots, changed sets/rep
-range/increment), preserving any sets already logged. This is what makes a
-`#/program` edit reach an already-generated but not-yet-finished `#/today`
-(including a same-day edit made after that day's workout was generated) —
-and it applies to any open instance, not just today's, so reopening an old
-finished workout via "Reopen Workout" also makes it eligible for
-reconciliation again.
+logged. An **unfinished** one dated today (or later) is not: every time
+`getTodayContext()` reads it, `reconcileWorkoutWithTemplate()` re-syncs it
+against the day template's current slots (added/removed exercises,
+reordered slots, changed sets/rep range/increment), preserving any sets
+already logged. This is what makes a `#/program` edit reach an
+already-generated but not-yet-finished `#/today` (including a same-day edit
+made after that day's workout was generated). A **past-dated** workout is
+never reconciled, even when unfinished or reopened via "Reopen Workout" —
+it's already in the past, so it shouldn't gain exercises added to the
+program since, and reconciling would also drop (with their logged sets) any
+exercise removed from the program since. It still gets
+`migrateLegacyPrefill`.
 
 Separately, `handleTodayChange` in `js/app.js` also carries a just-entered
 **weight** (as a real value, not a hint) into every other not-yet-logged set
@@ -274,9 +277,20 @@ no-re-render rule protects focus while typing, and a checkbox tap isn't.
 Add/remove/substitute-exercise actions on `#/today` present a scope choice.
 "This workout only" mutates just the current `fah_workouts` entry; "all
 future" also mutates the mesocycle's live day template via `Store`
-(`addExerciseSlot`/`removeExerciseSlot`/`updateExerciseSlot`). Reordering
-exercises has no scope choice — it always updates both the instance and the
-template (see `move-up`/`move-down` handling in `handleTodayAction`).
+(`addExerciseSlot`/`removeExerciseSlot`/`updateExerciseSlot`). Because
+today's unfinished workout is re-synced against the template on every read
+(see above), a "this workout only" edit has to be recorded on the instance
+or reconciliation undoes it on the next render (this actually happened —
+one-off adds vanished and one-off removes came straight back): a one-off
+added exercise is flagged `oneOff: true` (kept even though it has no
+template slot), and a one-off removed template slot goes into
+`workout.skippedSlotIds` (never re-added). Reordering exercises has no scope
+choice — it swaps the two exercises in the instance and the *same two*
+slots in the template (`Store.swapExerciseSlotOrder`, not the template's own
+neighbor, which can differ when a skipped slot sits between them), and
+leaves the template alone when either is a `oneOff`. Reconciliation then
+lays template-backed exercises out in template order within the positions
+they occupy, leaving `oneOff` ones where they are.
 `#/program` edits the template directly, so anything done there is always
 "future" by definition.
 

@@ -112,16 +112,25 @@ function generateWorkout(meso, dayTemplate, dateIso) {
 // against its (possibly since-edited) day template — so a #/program change
 // reaches #/today without needing to regenerate history. Finished workouts
 // are never passed in here; they stay frozen as-logged.
+//
+// "This workout only" edits are respected: an exercise added that way is
+// flagged `oneOff` (it has no template slot, so it would otherwise look
+// stale and be dropped), and a template slot removed that way is listed in
+// `workout.skippedSlotIds` (so it isn't re-added). Ordering: template-backed
+// exercises follow the template's relative order, within the positions they
+// already occupy — one-off exercises keep their own positions.
 function reconcileWorkoutWithTemplate(workout, dayTemplate) {
   const templateSlots = [...dayTemplate.exercises].sort((a, b) => a.order - b.order);
   const templateIds = new Set(templateSlots.map((s) => s.id));
+  const skipped = new Set(workout.skippedSlotIds || []);
   let changed = false;
 
   const before = workout.exercises.length;
-  workout.exercises = workout.exercises.filter((ex) => templateIds.has(ex.slotId));
+  workout.exercises = workout.exercises.filter((ex) => ex.oneOff || templateIds.has(ex.slotId));
   if (workout.exercises.length !== before) changed = true;
 
   templateSlots.forEach((slot, idx) => {
+    if (skipped.has(slot.id)) return;
     const existing = workout.exercises.find((ex) => ex.slotId === slot.id);
     const pct = slot.weightIncrementPct ?? DEFAULT_INCREMENT_PCT;
     if (!existing) {
@@ -129,34 +138,18 @@ function reconcileWorkoutWithTemplate(workout, dayTemplate) {
       workout.exercises.push({
         slotId: slot.id, exerciseId: slot.exerciseId,
         exerciseName: exercise ? exercise.name : "(unknown exercise)",
-        order: idx, repRangeMin: slot.repRangeMin, repRangeMax: slot.repRangeMax,
+        order: workout.exercises.length + idx, repRangeMin: slot.repRangeMin, repRangeMax: slot.repRangeMax,
         weightIncrementPct: pct,
         sets: buildPrefilledSets(slot, Store.getWorkouts(), dayTemplate.id, workout.date),
       });
       changed = true;
       return;
     }
-    if (existing.order !== idx || existing.repRangeMin !== slot.repRangeMin ||
+    if (existing.repRangeMin !== slot.repRangeMin ||
         existing.repRangeMax !== slot.repRangeMax || existing.weightIncrementPct !== pct) {
-      Object.assign(existing, { order: idx, repRangeMin: slot.repRangeMin, repRangeMax: slot.repRangeMax, weightIncrementPct: pct });
+      Object.assign(existing, { repRangeMin: slot.repRangeMin, repRangeMax: slot.repRangeMax, weightIncrementPct: pct });
       changed = true;
     }
-    // Migrate sets from before predictions became placeholder-only: those
-    // wrote the prediction into weight/reps and flagged it `prefilled`. An
-    // untouched one is cleared back to blank (the prediction survives in
-    // baseWeight/baseReps, now shown as the placeholder). New sets never have
-    // the `prefilled` key, so this only ever runs once per old set.
-    existing.sets.forEach((s) => {
-      if (!("prefilled" in s)) return;
-      if (!s.isLogged) {
-        if (s.prefilled && s.baseWeight == null) { s.baseWeight = s.weight; s.baseReps = s.reps; }
-        s.weight = null;
-        s.reps = null;
-      }
-      delete s.prefilled;
-      delete s.repsManual;
-      changed = true;
-    });
     if (existing.sets.length < slot.targetSets) {
       for (let i = existing.sets.length; i < slot.targetSets; i++) {
         existing.sets.push(blankSet(i));
@@ -168,8 +161,42 @@ function reconcileWorkoutWithTemplate(workout, dayTemplate) {
     }
   });
 
+  const templateIndex = new Map(templateSlots.map((s, i) => [s.id, i]));
+  const current = [...workout.exercises].sort((a, b) => a.order - b.order);
+  const backedInTemplateOrder = current
+    .filter((ex) => !ex.oneOff)
+    .sort((a, b) => templateIndex.get(a.slotId) - templateIndex.get(b.slotId));
+  let next = 0;
+  current
+    .map((ex) => (ex.oneOff ? ex : backedInTemplateOrder[next++]))
+    .forEach((ex, i) => {
+      if (ex.order !== i) { ex.order = i; changed = true; }
+    });
+
   if (changed) Store.updateWorkout(workout.id, { exercises: workout.exercises });
   return workout;
+}
+
+// Migrate sets from before predictions became placeholder-only: those wrote
+// the prediction into weight/reps and flagged it `prefilled`. An untouched
+// one is cleared back to blank (the prediction survives in
+// baseWeight/baseReps, now shown as the placeholder). New sets never have
+// the `prefilled` key, so this only ever runs once per old set. Runs on any
+// unfinished workout, past or present — unlike template reconciliation.
+function migrateLegacyPrefill(workout) {
+  let changed = false;
+  workout.exercises.forEach((ex) => ex.sets.forEach((s) => {
+    if (!("prefilled" in s)) return;
+    if (!s.isLogged) {
+      if (s.prefilled && s.baseWeight == null) { s.baseWeight = s.weight; s.baseReps = s.reps; }
+      s.weight = null;
+      s.reps = null;
+    }
+    delete s.prefilled;
+    delete s.repsManual;
+    changed = true;
+  }));
+  if (changed) Store.updateWorkout(workout.id, { exercises: workout.exercises });
 }
 
 function currentDateParam() {
@@ -188,7 +215,12 @@ function getTodayContext() {
   if (!dayTemplate) return { meso, dayTemplate: null, workout: null, dateIso, isToday };
   let workout = Store.findWorkoutByDate(meso.id, dateIso);
   if (workout && !workout.finished) {
-    workout = reconcileWorkoutWithTemplate(workout, dayTemplate);
+    migrateLegacyPrefill(workout);
+    // Only today's (or a later-dated) workout follows #/program edits. A
+    // past one — even reopened — stays as it was: reconciling it would add
+    // exercises added to the program since, and drop (with their logged
+    // sets) ones removed since.
+    if (dateIso >= realTodayIso) workout = reconcileWorkoutWithTemplate(workout, dayTemplate);
   } else if (!workout && dateIso <= realTodayIso) {
     workout = generateWorkout(meso, dayTemplate, dateIso);
   }
@@ -479,11 +511,15 @@ function handleTodayAction(action, btn, view) {
 
   if (action === "move-up" || action === "move-down") {
     const dir = action === "move-up" ? -1 : 1;
-    Store.reorderExerciseSlot(meso.id, workout.dayId, slotId, dir);
     const sorted = [...workout.exercises].sort((a, b) => a.order - b.order);
     const idx = sorted.findIndex((x) => x.slotId === slotId);
     const swapIdx = idx + dir;
     if (idx >= 0 && swapIdx >= 0 && swapIdx < sorted.length) {
+      // Swap the same two slots in the template — unless either is a
+      // "this workout only" addition, which the template doesn't have.
+      if (!sorted[idx].oneOff && !sorted[swapIdx].oneOff) {
+        Store.swapExerciseSlotOrder(meso.id, workout.dayId, sorted[idx].slotId, sorted[swapIdx].slotId);
+      }
       [sorted[idx].order, sorted[swapIdx].order] = [sorted[swapIdx].order, sorted[idx].order];
       Store.updateWorkout(workout.id, { exercises: workout.exercises });
     }
@@ -495,9 +531,14 @@ function handleTodayAction(action, btn, view) {
     App.ui.removeOpen = null;
   } else if (action === "confirm-remove") {
     const scope = view.querySelector(`input[name="remove-scope-${cssEscape(slotId)}"]:checked`).value;
-    if (scope === "future") Store.removeExerciseSlot(meso.id, workout.dayId, slotId);
+    if (scope === "future") {
+      Store.removeExerciseSlot(meso.id, workout.dayId, slotId);
+    } else {
+      // Remember it, so reconciliation doesn't re-add it from the template.
+      workout.skippedSlotIds = [...(workout.skippedSlotIds || []), slotId];
+    }
     workout.exercises = workout.exercises.filter((x) => x.slotId !== slotId);
-    Store.updateWorkout(workout.id, { exercises: workout.exercises });
+    Store.updateWorkout(workout.id, { exercises: workout.exercises, skippedSlotIds: workout.skippedSlotIds });
     App.ui.removeOpen = null;
   } else if (action === "open-substitute") {
     App.ui.substituteOpen = slotId; App.ui.removeOpen = null; App.ui.addOpen = false; App.ui.calendarOpen = false; App.ui.historyOpen = null;
@@ -543,6 +584,8 @@ function handleTodayAction(action, btn, view) {
         slotId: newSlotId, exerciseId: exercise.id, exerciseName: exercise.name,
         order: workout.exercises.length, repRangeMin, repRangeMax, weightIncrementPct,
         sets: Array.from({ length: targetSets }, (_, i) => blankSet(i)),
+        // Not in the template — tells reconciliation to keep it anyway.
+        ...(scope === "future" ? {} : { oneOff: true }),
       });
       Store.updateWorkout(workout.id, { exercises: workout.exercises });
     }
