@@ -206,14 +206,17 @@ which would otherwise silently stall that exercise's progression forever.
 *constant* rep count, so the new rep target after a bump is **not** reset to
 `repRangeMin` — that would read as an accidental deload (95lb×12 → 97.5lb×8
 is a much easier set than 95×12, even though the weight went up). Instead
-it's computed via `equivalentReps` (same Epley/Brzycki-averaged
-effort-equivalence estimate `applyEquivalentReps` uses for same-workout
-manual weight edits, see below), clamped to `[repRangeMin, repRangeMax]` as
-a safety bound — the upper bound essentially never binds (a heavier weight
-at equal effort always implies fewer reps than what was just lifted), the
-lower bound is what actually protects against a degenerate case (a
-plate-increment-floored jump on a very light weight producing a nonsensical
-or negative estimate). No prior history → blank/unprefilled (manual
+it's computed via `equivalentReps` (the same estimate `applyEquivalentReps`
+uses for same-workout manual weight edits, see below): one rep lost per
+`pctPerRep(baseWeight)`% of load increase — 15% for light weights, 2.5% for
+heavy, linearly interpolated by weight in between. The light rate is fitted
+to real week-over-week progressions (17.5×9 → 20×8, 15×8 → 20×6): light
+exercises move in big equipment-forced jumps (next dumbbell up) that cost
+far fewer reps than the same percentage on a heavy lift. Don't swap back to
+a single 1RM formula (Epley/Brzycki) — that was the previous version, and
+because it assumes one rep/weight curve for every exercise it turned
+15×9 → 20lb into 20×1. The medium band is interpolated, not fitted to data.
+Both call sites clamp the estimate to `[repRangeMin, repRangeMax]`. No prior history → blank/unprefilled (manual
 baseline).
 
 A **finished** workout's `exercises[]` snapshot is frozen — later template

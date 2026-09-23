@@ -537,14 +537,16 @@ function handleTodayAction(action, btn, view) {
 // handleTodayChange deliberately avoids a full re-render (see below). Skips
 // a set whose reps the user already typed by hand (repsManual) — a manual
 // override should stick even if the weight on that same set is edited again
-// afterward, same as an already-logged sibling set is left alone.
-function applyEquivalentReps(set, newWeight, slotId, index) {
+// afterward, same as an already-logged sibling set is left alone. Clamped to
+// the exercise's rep range, same as nextSet.
+function applyEquivalentReps(set, newWeight, ex, index) {
   if (set.repsManual) return;
-  const reps = equivalentReps(set.baseWeight, set.baseReps, newWeight);
-  if (reps == null) return;
+  const estimate = equivalentReps(set.baseWeight, set.baseReps, newWeight);
+  if (estimate == null) return;
+  const reps = Math.min(Math.max(estimate, ex.repRangeMin), ex.repRangeMax);
   set.reps = reps;
   const repsInput = document.querySelector(
-    `input[data-field="reps"][data-slot="${cssEscape(slotId)}"][data-set="${index}"]`
+    `input[data-field="reps"][data-slot="${cssEscape(ex.slotId)}"][data-set="${index}"]`
   );
   if (repsInput) {
     repsInput.value = reps;
@@ -583,9 +585,9 @@ function handleTodayChange(target) {
         otherInput.value = num;
         otherInput.classList.remove("prefilled");
       }
-      applyEquivalentReps(s, num, slotId, i);
+      applyEquivalentReps(s, num, ex, i);
     });
-    applyEquivalentReps(set, num, slotId, setIndex);
+    applyEquivalentReps(set, num, ex, setIndex);
   }
 
   Store.updateWorkout(workout.id, { exercises: workout.exercises });

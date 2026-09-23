@@ -25,22 +25,31 @@ function weightBumpTriggerReps(cls, repRangeMin, repRangeMax) {
   return repRangeMax;
 }
 
-// Estimate the rep count at newWeight that represents the same effort as
-// the (baseWeight, baseReps) anchor, by averaging the Epley and Brzycki
-// 1RM formulas (each inverted with itself, then averaged) — this cancels
-// most of Epley's high-rep overestimate and Brzycki's underestimate. Still
-// an estimate, most reliable in the ~2-10 rep range.
+// How many percent of load increase costs one rep. Light exercises move in
+// big equipment-forced jumps (15 -> 20lb dumbbells) that cost far fewer reps
+// than the same percentage on a heavy lift — fitted to real progressions
+// (17.5x9 -> 20x8, 15x8 -> 20x6: ~1 rep per 15%). Heavy matches what the old
+// Epley/Brzycki estimate gave at typical hypertrophy rep counts (~1 rep per
+// 2.5%). Medium interpolates linearly by weight so exercises either side of
+// a threshold don't behave wildly differently — that band is a guess, not
+// yet fitted to data.
+const LIGHT_PCT_PER_REP = 15;
+const HEAVY_PCT_PER_REP = 2.5;
+
+function pctPerRep(weight) {
+  if (weight <= LIGHT_WEIGHT_THRESHOLD) return LIGHT_PCT_PER_REP;
+  if (weight >= HEAVY_WEIGHT_THRESHOLD) return HEAVY_PCT_PER_REP;
+  const t = (weight - LIGHT_WEIGHT_THRESHOLD) / (HEAVY_WEIGHT_THRESHOLD - LIGHT_WEIGHT_THRESHOLD);
+  return LIGHT_PCT_PER_REP + t * (HEAVY_PCT_PER_REP - LIGHT_PCT_PER_REP);
+}
+
+// Estimate the rep target at newWeight relative to the (baseWeight,
+// baseReps) anchor: one rep lost (or gained, for a lighter weight) per
+// pctPerRep(baseWeight)% of load change. Callers clamp to the rep range.
 function equivalentReps(baseWeight, baseReps, newWeight) {
-  if (baseWeight == null || baseReps == null || newWeight == null || newWeight <= 0) return null;
-  const epley1RM = baseWeight * (1 + baseReps / 30);
-  const repsEpley = 30 * (epley1RM / newWeight - 1);
-  let repsAvg = repsEpley;
-  if (baseReps < 37) {
-    const brzycki1RM = (baseWeight * 36) / (37 - baseReps);
-    const repsBrzycki = 37 - (36 * newWeight) / brzycki1RM;
-    repsAvg = (repsEpley + repsBrzycki) / 2;
-  }
-  return Math.max(1, Math.round(repsAvg));
+  if (baseWeight == null || baseReps == null || newWeight == null || newWeight <= 0 || baseWeight <= 0) return null;
+  const pctChange = (newWeight / baseWeight - 1) * 100;
+  return Math.max(1, Math.round(baseReps - pctChange / pctPerRep(baseWeight)));
 }
 
 // Double-progression prefill: given the previous logged set and an
@@ -55,7 +64,7 @@ function equivalentReps(baseWeight, baseReps, newWeight) {
 // equivalentReps (not reset to repRangeMin) — otherwise the "same reps"
 // premise behind the percentage is broken and the new prescription reads as
 // an accidental deload (e.g. 95x12 -> 97.5x8 is a much easier set than
-// 95x12, even though 97.5x11 is roughly the same effort).
+// 95x12, when 97.5x12 is the real next step).
 function nextSet(prevSet, repRangeMin, repRangeMax, weightIncrementPct) {
   if (!prevSet || prevSet.reps == null || prevSet.weight == null) return null;
   const cls = weightClass(prevSet.weight);
