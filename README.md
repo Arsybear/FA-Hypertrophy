@@ -1,6 +1,6 @@
 # FA Hypertrophy
 
-A free, barebones personal alternative to the RP Hypertrophy app: a
+A free, barebones personal alternative to paid workout apps: a
 mesocycle-based training program tracker with built-in double-progression
 prefill (no RIR tracking, no volume-landmark dashboard).
 
