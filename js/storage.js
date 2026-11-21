@@ -12,13 +12,20 @@ function uid() {
 }
 
 function readJSON(key, fallback) {
+  const raw = localStorage.getItem(key);
+  if (!raw) return fallback;
   try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : fallback;
+    const value = JSON.parse(raw);
+    if (Array.isArray(value)) return value;
   } catch (e) {
     console.error("Failed to read", key, e);
-    return fallback;
   }
+  // Unreadable data: the next write would replace it with the fallback, so
+  // keep a copy first (never overwriting an earlier copy).
+  try {
+    if (localStorage.getItem(key + "_corrupt") == null) localStorage.setItem(key + "_corrupt", raw);
+  } catch (e) { /* storage full: nothing more to do */ }
+  return fallback;
 }
 
 function writeJSON(key, value) {
@@ -183,6 +190,9 @@ const Store = {
     Object.assign(w, updates);
     Store.saveWorkouts(list);
     return w;
+  },
+  removeWorkout(id) {
+    Store.saveWorkouts(Store.getWorkouts().filter((w) => w.id !== id));
   },
   finishWorkout(id) {
     return Store.updateWorkout(id, { finished: true, finishedAt: new Date().toISOString() });

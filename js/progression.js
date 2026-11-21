@@ -69,7 +69,8 @@ function nextSet(prevSet, repRangeMin, repRangeMax, weightIncrementPct) {
   if (!prevSet || prevSet.reps == null || prevSet.weight == null) return null;
   const cls = weightClass(prevSet.weight);
   const triggerReps = weightBumpTriggerReps(cls, repRangeMin, repRangeMax);
-  if (prevSet.reps >= triggerReps) {
+  // A 0lb set is bodyweight: there is no weight to bump, only reps.
+  if (prevSet.weight > 0 && prevSet.reps >= triggerReps) {
     const bumped = roundToPlate(prevSet.weight * (1 + weightIncrementPct / 100));
     const weight = bumped > prevSet.weight ? bumped : prevSet.weight + PLATE_INCREMENT;
     const equivReps = equivalentReps(prevSet.weight, prevSet.reps, weight);
@@ -83,21 +84,50 @@ function isCompleteSet(s) {
   return !!s && s.weight != null && s.reps != null;
 }
 
-// Find the most recent finished workout (date < beforeDate) whose matching
-// exercise has a complete set at setIndex, preferring an exact slotId match
-// and falling back to exerciseId (e.g. after a substitution reset history
-// for that slot). Looked up per set, not per exercise: a set left blank last
-// time (skipped, since untouched predictions are never saved) falls back to
-// the most recent workout where it was actually logged.
-function findLastLoggedSet(workouts, dayId, slotId, exerciseId, setIndex, beforeIsoDate) {
-  const candidates = workouts
-    .filter((w) => w.finished && w.dayId === dayId && w.date < beforeIsoDate)
-    .sort((a, b) => (a.date < b.date ? 1 : -1));
+// Ordered tests for "is this logged entry the exercise I mean". History and
+// predictions follow the exercise, never the slot: a slot's exercise can be
+// swapped, and the swapped-in one must not inherit the old one's numbers.
+// slotId only breaks the tie when one day has the same exercise in two
+// slots. The name fallback covers entries whose exerciseId is missing or
+// stale (exercise removed from the library and re-created) — library names
+// are unique (Store.addExercise), so a name match is the same exercise.
+function exerciseMatchers(slotId, exerciseId, exerciseName) {
+  return [
+    (e) => e.exerciseId === exerciseId && e.slotId === slotId,
+    (e) => e.exerciseId === exerciseId,
+    (e) => exerciseName != null && e.exerciseName === exerciseName,
+  ];
+}
 
-  for (const match of [(e) => e.slotId === slotId, (e) => e.exerciseId === exerciseId]) {
-    for (const w of candidates) {
-      const ex = w.exercises.find(match);
-      if (ex && isCompleteSet(ex.sets[setIndex])) return ex.sets[setIndex];
+function findMatchingExercise(workout, matchers) {
+  for (const match of matchers) {
+    const ex = workout.exercises.find(match);
+    if (ex) return ex;
+  }
+  return null;
+}
+
+// Find the most recent finished workout (date < beforeIsoDate) where this
+// exercise has a complete set at setIndex. Same day template first (the same
+// exercise can run heavier on one day than another); only when that day has
+// nothing does it fall back to any day — e.g. an exercise just swapped in,
+// or the first week of a new mesocycle (whose days all have new ids).
+// Looked up per set, not per exercise: a set left blank last time (skipped,
+// since untouched predictions are never saved) falls back to the most
+// recent workout where it was actually logged.
+function findLastLoggedSet(workouts, dayId, slotId, exerciseId, setIndex, beforeIsoDate, exerciseName) {
+  const candidates = workouts
+    .filter((w) => w.finished && w.date < beforeIsoDate)
+    .sort((a, b) => (a.date < b.date ? 1 : -1));
+  const matchers = exerciseMatchers(slotId, exerciseId, exerciseName);
+
+  for (const pool of [candidates.filter((w) => w.dayId === dayId), candidates]) {
+    // Newest workout first; the matcher order only decides within one workout.
+    for (const w of pool) {
+      for (const match of matchers) {
+        const ex = w.exercises.find(match);
+        if (ex && isCompleteSet(ex.sets[setIndex])) return ex.sets[setIndex];
+      }
     }
   }
   return null;
@@ -110,11 +140,11 @@ function blankSet(setIndex) {
 // Build a slot's sets for a new workout. weight/reps stay null — they only
 // ever hold what the user actually typed. The double-progression prediction
 // lives in baseWeight/baseReps and is shown as the inputs' placeholder.
-function buildPrefilledSets(slot, workouts, dayId, beforeIsoDate) {
+function buildPrefilledSets(slot, workouts, dayId, beforeIsoDate, exerciseName) {
   const sets = [];
   for (let i = 0; i < slot.targetSets; i++) {
     const set = blankSet(i);
-    const prevSet = findLastLoggedSet(workouts, dayId, slot.id, slot.exerciseId, i, beforeIsoDate);
+    const prevSet = findLastLoggedSet(workouts, dayId, slot.id, slot.exerciseId, i, beforeIsoDate, exerciseName);
     const suggestion = prevSet && nextSet(prevSet, slot.repRangeMin, slot.repRangeMax, slot.weightIncrementPct ?? DEFAULT_INCREMENT_PCT);
     if (suggestion) {
       set.baseWeight = suggestion.weight;

@@ -54,8 +54,11 @@ npx serve .
 python -m http.server
 ```
 
-Then open the printed URL. There is no test suite or lint config; verify
-changes by exercising the UI in a browser (resize to ~390px width to check
+Then open the printed URL. There is no lint config. `node scripts/test.js`
+is a small self-check of the pure logic (`js/schedule.js`,
+`js/progression.js`: history matching, double progression, weekday
+resolution) — run it after touching either file. Everything else is
+verified by exercising the UI in a browser (resize to ~390px width to check
 the mobile layout).
 
 ## Deployment
@@ -173,9 +176,14 @@ state.
 `?date=YYYY-MM-DD` query string off the hash (`currentDateParam()`),
 defaulting to the real current date, and renders Prev/Next/Today navigation
 (`renderDateNav`) so past days can be reopened and backfilled. A 📅 toggle
-next to that nav opens `renderCalendarPanel`, a read-only grid of the whole
-mesocycle (`meso.startDate` through `numWeeks * 7` days) with a dot per
-training day marking finished/in-progress/untouched status — it only reads
+next to that nav opens `renderCalendarPanel`, a read-only month view (one
+month at a time, `App.ui.calendarMonth`, opening on the viewed date's month)
+with a ‹ › pager and a dot per training day marking
+finished/in-progress/untouched status. It pages from the start month to the
+latest of the planned end (`numWeeks * 7` days), today, the viewed date and
+the last workout — nothing stops the program at `numWeeks`, it keeps
+scheduling, so a range that ended there left later months unreachable. Days
+before `startDate` are greyed and not links. It only reads
 `Store.getWorkouts()` for that status, never calls `generateWorkout`, so
 just opening the calendar can't create workout instances for days the user
 hasn't visited. Each day is a plain `<a href="#/today?date=...">`, so
@@ -183,13 +191,30 @@ clicking one is an ordinary route change (closes the panel via the usual
 `App.ui` hashchange reset, same as any other navigation). `getTodayContext()`
 resolves that date's workout instance, generating one on first lookup for
 that date (never for a date after today, so a future day can't be
-prematurely snapshotted). Generation snapshots the day template's slots into
+prematurely snapshotted, and never before `startDate`). The `?date=` value
+is only accepted as a real zero-padded `YYYY-MM-DD` (`currentDateParam`) —
+it is a storage key and is rendered into the page. If the schedule moved
+under an existing workout (start date edited, day removed and re-added) so
+its `dayId` no longer matches that date's template, an untouched unfinished
+one is dropped and regenerated; one with anything logged is kept and never
+reconciled (reconciling against another day's template deletes every
+exercise in it). Generation snapshots the day template's slots into
 the workout's `exercises[]` and builds each slot's `sets[]` via
 `buildPrefilledSets`, which finds, **per set index**, the most recent
-*finished* workout for the same `dayId` + `slotId` (falling back to
-`exerciseId`, e.g. after a one-off substitution) where that set was actually
-logged (`findLastLoggedSet`), and applies double progression (`nextSet` in
-`js/progression.js`). The prediction is stored only in the set's
+*finished* workout where that exercise's set was actually logged
+(`findLastLoggedSet`), and applies double progression (`nextSet` in
+`js/progression.js`). History and predictions follow the **exercise, never
+the slot** (`exerciseMatchers`, shared with the History sheet's
+`getExerciseHistory`): `exerciseId` + `slotId`, then `exerciseId`, then
+`exerciseName` (entries with a missing/stale id; library names are unique).
+`slotId` only breaks the tie when one day has the same exercise in two
+slots. Matching `slotId` first was a bug: a swapped-in exercise got the
+previous exercise's history and predictions. The lookup tries the same
+`dayId` first and only then any day, so a swapped-in exercise or a new
+mesocycle's first week (new day ids) still gets a prediction. For the same
+reason `confirm-substitute` rebuilds the sets' `baseWeight`/`baseReps` for
+the new exercise and blanks every set (anything already entered was the old
+exercise's and would be saved as the new one's history). The prediction is stored only in the set's
 `baseWeight`/`baseReps` and shown as the inputs' **placeholder**
 (`setWeightHint`/`setRepsHint` in `js/app.js`) — never written into
 `weight`/`reps`, which hold only what the user typed. That's deliberate: a
@@ -236,7 +261,8 @@ logged. An **unfinished** one dated today (or later) is not: every time
 `getTodayContext()` reads it, `reconcileWorkoutWithTemplate()` re-syncs it
 against the day template's current slots (added/removed exercises,
 reordered slots, changed sets/rep range/increment), preserving any sets
-already logged. This is what makes a `#/program` edit reach an
+already logged (lowering a slot's sets only drops trailing untouched
+sets). This is what makes a `#/program` edit reach an
 already-generated but not-yet-finished `#/today` (including a same-day edit
 made after that day's workout was generated). A **past-dated** workout is
 never reconciled, even when unfinished or reopened via "Reopen Workout" —

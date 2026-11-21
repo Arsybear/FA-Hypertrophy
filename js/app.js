@@ -23,6 +23,12 @@ function escapeHtml(str) {
   })[c]);
 }
 
+// Sets / reps / weeks typed into a form: a whole number from 1 to 99 (an
+// absurd set count would build that many set rows and overflow storage).
+function cleanCount(v) {
+  return Math.min(99, Math.max(1, Math.floor(Number(v)) || 1));
+}
+
 function fmtNum(n) {
   return n == null ? "" : n;
 }
@@ -87,7 +93,7 @@ function generateWorkout(meso, dayTemplate, dateIso) {
   const sortedSlots = [...dayTemplate.exercises].sort((a, b) => a.order - b.order);
   const exercises = sortedSlots.map((slot, idx) => {
     const exercise = library.find((e) => e.id === slot.exerciseId);
-    const sets = buildPrefilledSets(slot, workouts, dayTemplate.id, dateIso);
+    const sets = buildPrefilledSets(slot, workouts, dayTemplate.id, dateIso, exercise && exercise.name);
     return {
       slotId: slot.id,
       exerciseId: slot.exerciseId,
@@ -140,7 +146,7 @@ function reconcileWorkoutWithTemplate(workout, dayTemplate) {
         exerciseName: exercise ? exercise.name : "(unknown exercise)",
         order: workout.exercises.length + idx, repRangeMin: slot.repRangeMin, repRangeMax: slot.repRangeMax,
         weightIncrementPct: pct,
-        sets: buildPrefilledSets(slot, Store.getWorkouts(), dayTemplate.id, workout.date),
+        sets: buildPrefilledSets(slot, Store.getWorkouts(), dayTemplate.id, workout.date, exercise && exercise.name),
       });
       changed = true;
       return;
@@ -155,8 +161,10 @@ function reconcileWorkoutWithTemplate(workout, dayTemplate) {
         existing.sets.push(blankSet(i));
       }
       changed = true;
-    } else if (existing.sets.length > slot.targetSets) {
-      existing.sets.length = slot.targetSets;
+    }
+    // Fewer target sets: drop trailing sets, but never one already typed into.
+    while (existing.sets.length > Math.max(slot.targetSets, 0) && !isTouchedSet(existing.sets[existing.sets.length - 1])) {
+      existing.sets.pop();
       changed = true;
     }
   });
@@ -199,9 +207,16 @@ function migrateLegacyPrefill(workout) {
   if (changed) Store.updateWorkout(workout.id, { exercises: workout.exercises });
 }
 
+// Only a real, zero-padded YYYY-MM-DD is accepted — the value is used as a
+// workout key, compared as a string, and rendered into the page.
 function currentDateParam() {
   const q = location.hash.split("?")[1];
-  return q ? new URLSearchParams(q).get("date") : null;
+  const d = q ? new URLSearchParams(q).get("date") : null;
+  return d && /^\d{4}-\d{2}-\d{2}$/.test(d) && isoDate(parseLocalDate(d)) === d ? d : null;
+}
+
+function isTouchedSet(s) {
+  return !!s.isLogged || !!s.done || s.weight != null || s.reps != null;
 }
 
 function getTodayContext() {
@@ -211,39 +226,44 @@ function getTodayContext() {
   const dateIso = currentDateParam() || realTodayIso;
   const isToday = dateIso === realTodayIso;
   const date = parseLocalDate(dateIso);
-  const dayTemplate = resolveDayForDate(meso, date);
-  if (!dayTemplate) return { meso, dayTemplate: null, workout: null, dateIso, isToday };
+  // Before the mesocycle starts nothing is scheduled.
+  const dayTemplate = dateIso < meso.startDate ? null : resolveDayForDate(meso, date);
   let workout = Store.findWorkoutByDate(meso.id, dateIso);
+  // The schedule can move under an existing workout (start date edited, day
+  // removed and re-added). An untouched unfinished one is just a stale
+  // snapshot: drop it and follow the new schedule. One with anything logged
+  // is kept as it is and never reconciled against the other day's template,
+  // which would delete every exercise in it.
+  const sameDay = !!workout && !!dayTemplate && workout.dayId === dayTemplate.id;
+  if (workout && !sameDay && !workout.finished && !workout.exercises.some((ex) => ex.sets.some(isTouchedSet))) {
+    Store.removeWorkout(workout.id);
+    workout = null;
+  }
   if (workout && !workout.finished) {
     migrateLegacyPrefill(workout);
     // Only today's (or a later-dated) workout follows #/program edits. A
     // past one — even reopened — stays as it was: reconciling it would add
     // exercises added to the program since, and drop (with their logged
     // sets) ones removed since.
-    if (dateIso >= realTodayIso) workout = reconcileWorkoutWithTemplate(workout, dayTemplate);
-  } else if (!workout && dateIso <= realTodayIso) {
+    if (sameDay && dateIso >= realTodayIso) workout = reconcileWorkoutWithTemplate(workout, dayTemplate);
+  } else if (!workout && dayTemplate && dateIso <= realTodayIso) {
     workout = generateWorkout(meso, dayTemplate, dateIso);
   }
   return { meso, dayTemplate, workout, dateIso, isToday };
 }
 
-// Matches slotId first (same day template), then exerciseId (same library
-// exercise on a different day), then falls back to exerciseName — some
-// pre-existing logged workouts predate exerciseId being reliably set on
-// every exercise entry, so a stale/missing exerciseId shouldn't hide
-// history that #/history (which only ever reads exerciseName) can already
-// show is really there.
+// Every finished workout, any day or mesocycle, that logged this exercise
+// (see exerciseMatchers in progression.js: by exercise, never by slot).
 function getExerciseHistory(slotId, exerciseId, exerciseName) {
-  const workouts = Store.getWorkouts()
-    .filter((w) => w.finished)
-    .sort((a, b) => (a.date < b.date ? 1 : -1));
+  const matchers = exerciseMatchers(slotId, exerciseId, exerciseName);
   const rows = [];
-  for (const w of workouts) {
-    const ex = w.exercises.find((e) => e.slotId === slotId)
-      || w.exercises.find((e) => e.exerciseId === exerciseId)
-      || w.exercises.find((e) => e.exerciseName === exerciseName);
-    if (ex) rows.push({ date: w.date, dayName: w.dayName, sets: ex.sets });
-  }
+  Store.getWorkouts()
+    .filter((w) => w.finished)
+    .sort((a, b) => (a.date < b.date ? 1 : -1))
+    .forEach((w) => {
+      const ex = findMatchingExercise(w, matchers);
+      if (ex) rows.push({ date: w.date, dayName: w.dayName, sets: ex.sets });
+    });
   return rows;
 }
 
@@ -264,26 +284,50 @@ function renderDateNav(meso, dateIso, isToday) {
   ${App.ui.calendarOpen ? renderCalendarPanel(meso, dateIso) : ""}`;
 }
 
-// Read-only overview of the mesocycle's whole date range — never generates
-// or mutates workout instances, just reads existing fah_workouts for status.
+// Read-only month view of the mesocycle — never generates or mutates workout
+// instances, just reads existing fah_workouts for status. Pages from the
+// start month to the last month that has anything in it: the program keeps
+// scheduling past numWeeks, so the end is the latest of the planned end,
+// today, the viewed date and the last workout.
 function renderCalendarPanel(meso, selectedIso) {
-  const start = parseLocalDate(meso.startDate);
-  const totalDays = meso.numWeeks * 7;
   const todayIso = isoDate(new Date());
   const workoutsByDate = {};
   Store.getWorkouts()
     .filter((w) => w.mesocycleId === meso.id)
     .forEach((w) => { workoutsByDate[w.date] = w; });
 
-  const leadingBlanks = jsDateToWeekdayIndex(start);
-  const cells = Array.from({ length: leadingBlanks }, () => null);
-  for (let i = 0; i < totalDays; i++) {
-    const date = addDays(start, i);
-    const dateIso = isoDate(date);
-    cells.push({ dateIso, date, dayTemplate: resolveDayForDate(meso, date), workout: workoutsByDate[dateIso] });
+  let lastIso = isoDate(addDays(parseLocalDate(meso.startDate), meso.numWeeks * 7 - 1));
+  for (const iso of [todayIso, selectedIso, ...Object.keys(workoutsByDate)]) {
+    if (iso > lastIso) lastIso = iso;
   }
+  const firstMonth = meso.startDate.slice(0, 7);
+  const lastMonth = lastIso.slice(0, 7);
+  let month = App.ui.calendarMonth || selectedIso.slice(0, 7);
+  if (month < firstMonth) month = firstMonth;
+  if (month > lastMonth) month = lastMonth;
+
+  const [year, monthNum] = month.split("-").map(Number);
+  const first = new Date(year, monthNum - 1, 1);
+  const daysInMonth = new Date(year, monthNum, 0).getDate();
+  const cells = Array.from({ length: jsDateToWeekdayIndex(first) }, () => null);
+  for (let d = 1; d <= daysInMonth; d++) {
+    const date = new Date(year, monthNum - 1, d);
+    const dateIso = isoDate(date);
+    const inBlock = dateIso >= meso.startDate;
+    cells.push({ dateIso, date, inBlock, dayTemplate: inBlock ? resolveDayForDate(meso, date) : null, workout: workoutsByDate[dateIso] });
+  }
+  const monthNavBtn = (label, target, name) => {
+    const iso = isoDate(target).slice(0, 7);
+    const off = iso < firstMonth || iso > lastMonth;
+    return `<button class="btn small" data-action="calendar-month" data-month="${iso}" aria-label="${name} month" ${off ? "disabled" : ""}>${label}</button>`;
+  };
 
   return `<div class="calendar-panel">
+    <div class="calendar-month-nav">
+      ${monthNavBtn("‹", new Date(year, monthNum - 2, 1), "Previous")}
+      <strong>${first.toLocaleDateString(undefined, { month: "long", year: "numeric" })}</strong>
+      ${monthNavBtn("›", new Date(year, monthNum, 1), "Next")}
+    </div>
     <div class="calendar-weekdays">${WEEKDAY_LABELS.map((w) => `<span>${w.slice(0, 2)}</span>`).join("")}</div>
     <div class="calendar-grid">
       ${cells.map((c) => renderCalendarCell(c, todayIso, selectedIso)).join("")}
@@ -299,7 +343,8 @@ function renderCalendarPanel(meso, selectedIso) {
 function renderCalendarCell(c, todayIso, selectedIso) {
   if (!c) return `<span class="cal-cell empty"></span>`;
   const { dateIso, date, dayTemplate, workout } = c;
-  const isRest = !dayTemplate;
+  if (!c.inBlock) return `<span class="cal-cell rest outside"><span class="cal-daynum">${date.getDate()}</span></span>`;
+  const isRest = !dayTemplate && !workout;
   const finished = workout && workout.finished;
   const classes = [
     "cal-cell",
@@ -308,7 +353,7 @@ function renderCalendarCell(c, todayIso, selectedIso) {
     dateIso === selectedIso ? "selected" : "",
     finished ? "finished" : (workout ? "started" : ""),
   ].filter(Boolean).join(" ");
-  return `<a class="${classes}" href="#/today?date=${dateIso}" title="${escapeHtml(dayTemplate ? dayTemplate.name : "Rest day")} — ${dateIso}">
+  return `<a class="${classes}" href="#/today?date=${dateIso}" title="${escapeHtml(workout ? workout.dayName : dayTemplate ? dayTemplate.name : "Rest day")} — ${dateIso}">
     <span class="cal-daynum">${date.getDate()}</span>
     ${!isRest ? `<span class="cal-dot"></span>` : ""}
   </a>`;
@@ -318,7 +363,7 @@ function renderToday(container) {
   const { meso, dayTemplate, workout, dateIso, isToday } = getTodayContext();
   if (!meso) { container.innerHTML = emptyMesoState(); return; }
 
-  if (!dayTemplate) {
+  if (!dayTemplate && !workout) {
     container.innerHTML = `
       ${renderDateNav(meso, dateIso, isToday)}
       <div class="card">
@@ -497,7 +542,13 @@ function handleTodayAction(action, btn, view) {
   if (!meso) return;
   if (action === "toggle-calendar") {
     App.ui.calendarOpen = !App.ui.calendarOpen;
+    App.ui.calendarMonth = null;
     App.ui.removeOpen = null; App.ui.substituteOpen = null; App.ui.addOpen = false; App.ui.historyOpen = null;
+    renderCurrentView();
+    return;
+  }
+  if (action === "calendar-month") {
+    App.ui.calendarMonth = btn.dataset.month;
     renderCurrentView();
     return;
   }
@@ -554,6 +605,16 @@ function handleTodayAction(action, btn, view) {
       const ex = workout.exercises.find((x) => x.slotId === slotId);
       ex.exerciseId = exercise.id;
       ex.exerciseName = exercise.name;
+      // Sets belong to the exercise: anything already entered was the old
+      // exercise's and would be saved as the new one's history, so the sets
+      // start over with the new exercise's own predictions.
+      const fresh = buildPrefilledSets(
+        { id: slotId, exerciseId: exercise.id, targetSets: ex.sets.length, repRangeMin: ex.repRangeMin, repRangeMax: ex.repRangeMax, weightIncrementPct: ex.weightIncrementPct },
+        Store.getWorkouts(), workout.dayId, workout.date, exercise.name
+      );
+      ex.sets.forEach((s, i) => {
+        Object.assign(s, blankSet(i), { baseWeight: fresh[i].baseWeight, baseReps: fresh[i].baseReps });
+      });
       if (scope === "future") Store.updateExerciseSlot(meso.id, workout.dayId, slotId, { exerciseId: exercise.id });
       Store.updateWorkout(workout.id, { exercises: workout.exercises });
     }
@@ -566,26 +627,25 @@ function handleTodayAction(action, btn, view) {
     const select = view.querySelector('select[data-role="add-exercise-select"]');
     const newName = view.querySelector('input[data-role="add-new-name"]').value.trim();
     const newGroup = view.querySelector('select[data-role="add-new-group"]').value;
-    const targetSets = Number(view.querySelector('input[data-role="add-sets"]').value) || 1;
-    const repRangeMin = Number(view.querySelector('input[data-role="add-rep-min"]').value) || 1;
-    const repRangeMax = Number(view.querySelector('input[data-role="add-rep-max"]').value) || repRangeMin;
-    const weightIncrementPct = Number(view.querySelector('input[data-role="add-increment"]').value) || 0;
+    const targetSets = cleanCount(view.querySelector('input[data-role="add-sets"]').value);
+    const repRangeMin = cleanCount(view.querySelector('input[data-role="add-rep-min"]').value);
+    const repRangeMax = Math.max(repRangeMin, cleanCount(view.querySelector('input[data-role="add-rep-max"]').value));
+    const weightIncrementPct = Math.max(0, Number(view.querySelector('input[data-role="add-increment"]').value) || 0);
     const scope = view.querySelector('input[name="add-scope"]:checked').value;
     const exercise = newName ? Store.addExercise(newName, newGroup) : Store.getExercises().find((x) => x.id === select.value);
     if (exercise) {
-      let newSlotId;
-      if (scope === "future") {
-        const slot = Store.addExerciseSlot(meso.id, workout.dayId, { exerciseId: exercise.id, targetSets, repRangeMin, repRangeMax, weightIncrementPct });
-        newSlotId = slot.id;
-      } else {
-        newSlotId = uid();
-      }
+      // slot is null when the workout's day is no longer in the program
+      // (see getTodayContext) — the add then stays on this workout only.
+      const slot = scope === "future"
+        ? Store.addExerciseSlot(meso.id, workout.dayId, { exerciseId: exercise.id, targetSets, repRangeMin, repRangeMax, weightIncrementPct })
+        : null;
+      const newSlotId = slot ? slot.id : uid();
       workout.exercises.push({
         slotId: newSlotId, exerciseId: exercise.id, exerciseName: exercise.name,
         order: workout.exercises.length, repRangeMin, repRangeMax, weightIncrementPct,
         sets: Array.from({ length: targetSets }, (_, i) => blankSet(i)),
         // Not in the template — tells reconciliation to keep it anyway.
-        ...(scope === "future" ? {} : { oneOff: true }),
+        ...(slot ? {} : { oneOff: true }),
       });
       Store.updateWorkout(workout.id, { exercises: workout.exercises });
     }
@@ -649,6 +709,7 @@ function handleSetDoneChange(target) {
       const hint = setRepsHint(ex, set);
       if (typeof hint === "number") set.reps = hint;
     }
+    set.isLogged = set.weight != null || set.reps != null;
     if (!isCompleteSet(set)) {
       target.checked = false;
       const emptyField = set.weight == null ? "weight" : "reps";
@@ -862,10 +923,10 @@ function handleProgramAction(action, btn, view) {
     const select = view.querySelector(`select[data-role="new-slot-exercise"][data-day="${cssEscape(dayId)}"]`);
     const newName = view.querySelector(`input[data-role="new-slot-name"][data-day="${cssEscape(dayId)}"]`).value.trim();
     const newGroup = view.querySelector(`select[data-role="new-slot-group"][data-day="${cssEscape(dayId)}"]`).value;
-    const targetSets = Number(view.querySelector(`input[data-role="new-slot-sets"][data-day="${cssEscape(dayId)}"]`).value) || 1;
-    const repRangeMin = Number(view.querySelector(`input[data-role="new-slot-rep-min"][data-day="${cssEscape(dayId)}"]`).value) || 1;
-    const repRangeMax = Number(view.querySelector(`input[data-role="new-slot-rep-max"][data-day="${cssEscape(dayId)}"]`).value) || repRangeMin;
-    const weightIncrementPct = Number(view.querySelector(`input[data-role="new-slot-increment"][data-day="${cssEscape(dayId)}"]`).value) || 0;
+    const targetSets = cleanCount(view.querySelector(`input[data-role="new-slot-sets"][data-day="${cssEscape(dayId)}"]`).value);
+    const repRangeMin = cleanCount(view.querySelector(`input[data-role="new-slot-rep-min"][data-day="${cssEscape(dayId)}"]`).value);
+    const repRangeMax = Math.max(repRangeMin, cleanCount(view.querySelector(`input[data-role="new-slot-rep-max"][data-day="${cssEscape(dayId)}"]`).value));
+    const weightIncrementPct = Math.max(0, Number(view.querySelector(`input[data-role="new-slot-increment"][data-day="${cssEscape(dayId)}"]`).value) || 0);
     const exercise = newName ? Store.addExercise(newName, newGroup) : Store.getExercises().find((x) => x.id === select.value);
     if (exercise) {
       Store.addExerciseSlot(meso.id, dayId, { exerciseId: exercise.id, targetSets, repRangeMin, repRangeMax, weightIncrementPct });
@@ -894,7 +955,22 @@ function handleProgramChange(target) {
   const dayId = target.dataset.day, slotId = target.dataset.slot;
   const field = SLOT_FIELD_MAP[target.dataset.role];
   if (!field) return;
-  Store.updateExerciseSlot(meso.id, dayId, slotId, { [field]: Number(target.value) });
+  // The inputs' min is only a hint: an empty, zero, negative or fractional
+  // value here would reach today's workout (0 sets, a broken rep range).
+  const value = field === "weightIncrementPct" ? Math.max(0, Number(target.value) || 0) : cleanCount(target.value);
+  target.value = value;
+  const updates = { [field]: value };
+  const day = meso.days.find((d) => d.id === dayId);
+  const slot = day && day.exercises.find((e) => e.id === slotId);
+  // Keep min <= max by dragging the other end along.
+  const other = field === "repRangeMin" && slot && value > slot.repRangeMax ? ["repRangeMax", "slot-rep-max"]
+    : field === "repRangeMax" && slot && value < slot.repRangeMin ? ["repRangeMin", "slot-rep-min"] : null;
+  if (other) {
+    updates[other[0]] = value;
+    const otherInput = target.closest("tr").querySelector(`input[data-role="${other[1]}"]`);
+    if (otherInput) otherInput.value = value;
+  }
+  Store.updateExerciseSlot(meso.id, dayId, slotId, updates);
   // No renderCurrentView(): see the comment in handleTodayChange — this
   // table has the same rapid-tab-through-inputs pattern.
 }
@@ -947,6 +1023,9 @@ function renderSettings(container) {
   const mesos = Store.getMesocycles().sort((a, b) => (a.startDate < b.startDate ? 1 : -1));
   const active = mesos.find((m) => m.active);
   const exercises = Store.getExercises().sort((a, b) => a.name.localeCompare(b.name));
+  // An exercise a program still uses can't be removed: its slots would turn
+  // into "(unknown exercise)". Take it out of the program first.
+  const inUse = new Set(mesos.flatMap((m) => m.days.flatMap((d) => d.exercises.map((slot) => slot.exerciseId))));
 
   container.innerHTML = `
     ${App.updateAvailable ? `
@@ -997,7 +1076,7 @@ function renderSettings(container) {
               ${renderMuscleTag(ex.muscleGroup || "Other")}
               <strong>${escapeHtml(ex.name)}</strong>
             </div>
-            ${App.ui.removeExerciseOpen === ex.id
+            ${inUse.has(ex.id) ? `<span class="muted">In a program</span>` : App.ui.removeExerciseOpen === ex.id
               ? `<span><button data-action="confirm-remove-exercise" data-id="${ex.id}">Confirm</button>
                  <button data-action="cancel-remove-exercise" data-id="${ex.id}">Cancel</button></span>`
               : `<button class="btn-danger" data-action="open-remove-exercise" data-id="${ex.id}">Remove</button>`}
@@ -1009,7 +1088,7 @@ function renderSettings(container) {
 
 const MESO_EDIT_FIELD_MAP = {
   "edit-name": ["name", (v) => v],
-  "edit-weeks": ["numWeeks", (v) => Number(v) || 1],
+  "edit-weeks": ["numWeeks", cleanCount],
   "edit-start-date": ["startDate", (v) => v],
 };
 
@@ -1022,7 +1101,7 @@ function handleSettingsAction(action, btn, view) {
     Store.setActiveMesocycle(btn.dataset.id);
   } else if (action === "create-meso") {
     const name = view.querySelector('[data-role="new-meso-name"]').value.trim() || "New Mesocycle";
-    const numWeeks = Number(view.querySelector('[data-role="new-meso-weeks"]').value) || 6;
+    const numWeeks = cleanCount(view.querySelector('[data-role="new-meso-weeks"]').value || 6);
     const startDate = view.querySelector('[data-role="new-meso-start-date"]').value || isoDate(new Date());
     Store.createMesocycle({ name, numWeeks, startDate });
   } else if (action === "open-remove-exercise") {
@@ -1056,7 +1135,11 @@ function handleSettingsChange(target) {
   const active = Store.getActiveMesocycle();
   if (!active) return;
   const [field, parse] = mapping;
+  // A cleared name or start date is not saved (an empty start date would
+  // turn every day into a rest day); the box goes back to the stored value.
+  if (field !== "numWeeks" && !target.value.trim()) { target.value = active[field]; return; }
   Store.updateMesocycle(active.id, { [field]: parse(target.value) });
+  if (field === "numWeeks") target.value = parse(target.value);
   if (target.dataset.role === "edit-start-date") {
     updateStartWeekdayHint(target, "edit-start-weekday-hint");
   }

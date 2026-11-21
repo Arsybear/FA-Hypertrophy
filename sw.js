@@ -1,4 +1,4 @@
-const CACHE_NAME = "fa-hypertrophy-v23";
+const CACHE_NAME = "fa-hypertrophy-v24";
 const ASSETS = [
   "./",
   "index.html",
@@ -8,6 +8,8 @@ const ASSETS = [
   "js/progression.js",
   "js/app.js",
   "manifest.json",
+  "icons/icon-192.png",
+  "icons/icon-512.png",
 ];
 
 self.addEventListener("install", (event) => {
@@ -36,7 +38,7 @@ self.addEventListener("fetch", (event) => {
           }
           return res;
         })
-        .catch(() => cached);
+        .catch(() => cached || Response.error());
       return cached || fetchPromise;
     })
   );

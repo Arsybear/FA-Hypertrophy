@@ -190,6 +190,13 @@ label { display: block; margin-bottom: 8px; font-size: 13px; }
   padding: 10px;
   margin-bottom: 12px;
 }
+.calendar-month-nav {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.cal-cell.outside { opacity: 0.4; }
 .calendar-weekdays, .calendar-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
