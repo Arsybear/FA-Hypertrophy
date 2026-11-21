@@ -4,11 +4,12 @@ import * as progression from "./progression.js";
 import * as ui from "./ui.js";
 import * as workout from "./workout.js";
 import { Store } from "./store.js";
+import { handleChartPoint } from "./chart.js";
 import { App, currentRoute, registerRoute, renderCurrentView } from "./ui.js";
 import { handleSetDoneChange, handleTodayAction, handleTodayChange, renderToday } from "./views/today.js";
 import { handleProgramAction, handleProgramChange, renderProgram } from "./views/program.js";
 import { handleHistoryAction, renderHistory } from "./views/history.js";
-import { handleSettingsAction, handleSettingsChange, renderSettings, updateStartWeekdayHint } from "./views/settings.js";
+import { handleImportFile, handleSettingsAction, handleSettingsChange, renderSettings, updateStartWeekdayHint } from "./views/settings.js";
 
 // Modules have no page globals; this one handle is for poking at the app
 // from the browser console (and for seeding state in manual tests).
@@ -69,6 +70,7 @@ export function handleGlobalChange(e) {
   if (route === "today" && t.matches('input[data-role="set-done"]')) handleSetDoneChange(t);
   else if (route === "today" && t.matches("input[data-field]")) handleTodayChange(t);
   else if (route === "program" && t.matches('input[data-role^="slot-"]')) handleProgramChange(t);
+  else if (route === "settings" && t.dataset.role === "import-file") handleImportFile(t);
   else if (route === "settings" && t.dataset.role === "new-meso-start-date") updateStartWeekdayHint(t, "new-meso-start-weekday-hint");
   else if (route === "settings" && t.matches('[data-role^="edit-"]')) handleSettingsChange(t);
   else if (t.matches(EXISTING_EXERCISE_SELECT_ROLES)) handleExercisePickChange(t);
@@ -90,6 +92,7 @@ window.addEventListener("DOMContentLoaded", () => {
   // which container an event came from (it re-derives state from Store and
   // currentRoute() rather than closing over anything from the listener).
   document.getElementById("overlay-root").addEventListener("click", handleGlobalClick);
+  for (const type of ["pointerover", "click"]) document.getElementById("overlay-root").addEventListener(type, handleChartPoint);
   if (!location.hash) location.hash = "#/today";
   renderCurrentView();
   if ("serviceWorker" in navigator) {

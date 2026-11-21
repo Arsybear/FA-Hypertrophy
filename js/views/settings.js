@@ -1,4 +1,5 @@
-import { Store } from "../store.js";
+import { APP_VERSION } from "../version.js";
+import { Store, validateBackup } from "../store.js";
 import { WEEKDAY_LABELS, isoDate, jsDateToWeekdayIndex, mesocycleStartWeekday, parseLocalDate } from "../schedule.js";
 import { App, cleanCount, escapeHtml, renderCurrentView, renderMuscleTag, icon, pageHeader } from "../ui.js";
 import { handleTodayChange } from "./today.js";
@@ -28,7 +29,10 @@ export function renderSettings(container) {
               <strong>${escapeHtml(m.name)}</strong>
               <span class="muted">${m.numWeeks}wk · starts ${m.startDate}</span>
             </div>
-            ${m.active ? `<span class="badge">Active</span>` : `<button class="btn small" data-action="switch-active" data-id="${m.id}">Make active</button>`}
+            <span class="form-actions">
+              ${m.active ? `<span class="badge">Active</span>` : `<button class="btn small" data-action="switch-active" data-id="${m.id}">Make active</button>`}
+              <button class="btn small ghost" data-action="copy-meso" data-id="${m.id}" aria-label="Copy ${escapeHtml(m.name)}">Copy</button>
+            </span>
           </div>`).join("")}
       </div>
     `}
@@ -52,6 +56,26 @@ export function renderSettings(container) {
       <button class="btn primary wide" data-action="create-meso">Create mesocycle</button>
     </div>
 
+    <h3>Backup</h3>
+    <div class="card">
+      <p class="muted">Everything is stored only in this browser. Export a backup file now and then; clearing site data or losing the phone erases it.</p>
+      ${App.ui.backupMessage ? `<p class="${App.ui.backupError ? "warn-text" : "ok-text"}">${escapeHtml(App.ui.backupMessage)}</p>` : ""}
+      ${App.pendingImport ? `
+        <div class="inline-form">
+          <p><strong>Replace all current data?</strong></p>
+          <p class="muted">Now: ${Store.getMesocycles().length} mesocycles, ${Store.getWorkouts().length} workouts.<br>
+          Backup from ${escapeHtml(String(App.pendingImport.exportedAt || "").slice(0, 10))}: ${App.pendingImport.mesocycles.length} mesocycles, ${App.pendingImport.workouts.length} workouts.</p>
+          <div class="form-actions">
+            <button class="btn small danger" data-action="confirm-import">Replace</button>
+            <button class="btn small ghost" data-action="cancel-import">Cancel</button>
+          </div>
+        </div>` : `
+        <div class="form-actions">
+          <button class="btn small primary" data-action="export-backup">Export backup</button>
+          <label class="btn small file-btn">Import backup<input type="file" accept=".json,application/json" data-role="import-file"></label>
+        </div>`}
+    </div>
+
     <h3>Exercise library</h3>
     ${exercises.length === 0 ? `<p class="muted">No exercises yet.</p>` : `
       <div class="meso-list">
@@ -68,7 +92,38 @@ export function renderSettings(container) {
           </div>`).join("")}
       </div>
     `}
+    <p class="about muted">FA Hypertrophy · version ${APP_VERSION}</p>
   `;
+}
+
+// Hands the backup to the user as a file. An installed iOS app cannot
+// download, so where the share sheet takes files that is used instead
+// ("Save to Files").
+async function exportBackup() {
+  const name = `fa-hypertrophy-backup-${isoDate(new Date())}.json`;
+  const file = new File([JSON.stringify(Store.exportBackup())], name, { type: "application/json" });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file] }); return; } catch (e) { if (e.name === "AbortError") return; }
+  }
+  const url = URL.createObjectURL(file);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+// A picked backup file is only validated here; nothing is written until the
+// inline "Replace" confirmation (App.pendingImport survives navigation,
+// App.ui does not).
+export async function handleImportFile(input) {
+  let data = null;
+  try { data = JSON.parse(await input.files[0].text()); } catch (e) { /* not JSON: validateBackup rejects null */ }
+  const error = validateBackup(data);
+  App.pendingImport = error ? null : data;
+  App.ui.backupMessage = error;
+  App.ui.backupError = !!error;
+  renderCurrentView();
 }
 
 export const MESO_EDIT_FIELD_MAP = {
@@ -82,8 +137,21 @@ export function handleSettingsAction(action, btn, view) {
     location.reload();
     return;
   }
+  if (action === "export-backup") {
+    exportBackup();
+    return;
+  }
   if (action === "switch-active") {
     Store.setActiveMesocycle(btn.dataset.id);
+  } else if (action === "copy-meso") {
+    Store.cloneMesocycle(btn.dataset.id, isoDate(new Date()));
+  } else if (action === "confirm-import") {
+    Store.importBackup(App.pendingImport);
+    App.pendingImport = null;
+    App.ui.backupMessage = "Backup imported.";
+    App.ui.backupError = false;
+  } else if (action === "cancel-import") {
+    App.pendingImport = null;
   } else if (action === "create-meso") {
     const name = view.querySelector('[data-role="new-meso-name"]').value.trim() || "New Mesocycle";
     const numWeeks = cleanCount(view.querySelector('[data-role="new-meso-weeks"]').value || 6);

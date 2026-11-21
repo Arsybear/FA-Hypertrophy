@@ -1,3 +1,5 @@
+import { isoDate, parseLocalDate } from "./schedule.js";
+
 // localStorage-backed data access for FA-Hypertrophy.
 // Keys: fah_exercises, fah_mesocycles, fah_workouts
 
@@ -86,6 +88,34 @@ export const Store = {
     Object.assign(meso, updates);
     Store.saveMesocycles(list);
     return meso;
+  },
+  // A new, inactive mesocycle with the same days and exercises (all new ids)
+  // and no workouts — a starting point to adjust instead of rebuilding.
+  // Days are pinned to offsets from the start weekday, so the copy starts on
+  // the same weekday as the original to keep every training day where it
+  // was: the first such date after the original's planned end, or after
+  // today if that has already passed.
+  cloneMesocycle(mesoId, todayIso) {
+    const list = Store.getMesocycles();
+    const source = list.find((m) => m.id === mesoId);
+    if (!source) return null;
+    const start = parseLocalDate(source.startDate);
+    start.setDate(start.getDate() + source.numWeeks * 7);
+    while (isoDate(start) < todayIso) start.setDate(start.getDate() + 7);
+    const copy = {
+      ...structuredClone(source),
+      id: uid(),
+      name: `${source.name} (copy)`,
+      startDate: isoDate(start),
+      active: false,
+    };
+    copy.days.forEach((day) => {
+      day.id = uid();
+      day.exercises.forEach((slot) => { slot.id = uid(); });
+    });
+    list.push(copy);
+    Store.saveMesocycles(list);
+    return copy;
   },
   addDay(mesoId, name, weekdayOffset) {
     const list = Store.getMesocycles();
@@ -197,4 +227,62 @@ export const Store = {
   finishWorkout(id) {
     return Store.updateWorkout(id, { finished: true, finishedAt: new Date().toISOString() });
   },
+
+  // --- Backup ---
+  exportBackup() {
+    return {
+      app: BACKUP_APP,
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      exercises: Store.getExercises(),
+      mesocycles: Store.getMesocycles(),
+      workouts: Store.getWorkouts(),
+    };
+  },
+  // Replaces everything. The caller has already run validateBackup. The data
+  // being replaced is kept under fah_before_import, so a wrong file can be
+  // undone by hand.
+  importBackup(data) {
+    localStorage.setItem("fah_before_import", JSON.stringify(Store.exportBackup()));
+    writeJSON(KEYS.exercises, data.exercises);
+    writeJSON(KEYS.mesocycles, data.mesocycles);
+    writeJSON(KEYS.workouts, data.workouts);
+  },
 };
+
+const BACKUP_APP = "fa-hypertrophy";
+
+// A backup file is outside input: ids, dates and numbers from it end up in
+// HTML attributes and text without escaping (they are app-generated
+// everywhere else). So the whole file is rejected unless every one of them
+// has the shape the app itself writes. Returns an error message, or null.
+export function validateBackup(data) {
+  const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+  const id = (v) => typeof v === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(v);
+  const str = (v) => typeof v === "string" && v.length <= 200;
+  const num = (v) => typeof v === "number" && Number.isFinite(v);
+  const optNum = (v) => v == null || num(v);
+  const optBool = (v) => v == null || typeof v === "boolean";
+  const date = (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) && isoDate(parseLocalDate(v)) === v;
+  const all = (list, test) => Array.isArray(list) && list.every((item) => isObj(item) && test(item));
+
+  if (!isObj(data) || data.app !== BACKUP_APP) return "This is not an FA Hypertrophy backup file.";
+  if (data.version !== 1) return "This backup was made by a newer version of the app.";
+
+  const exercisesOk = all(data.exercises, (e) => id(e.id) && str(e.name) && (e.muscleGroup == null || str(e.muscleGroup)));
+  const mesocyclesOk = all(data.mesocycles, (m) =>
+    id(m.id) && str(m.name) && num(m.numWeeks) && date(m.startDate) && typeof m.active === "boolean"
+    && all(m.days, (d) => id(d.id) && str(d.name) && optNum(d.weekdayOffset) && optNum(d.order)
+      && all(d.exercises, (slot) => id(slot.id) && id(slot.exerciseId) && num(slot.order) && num(slot.targetSets)
+        && num(slot.repRangeMin) && num(slot.repRangeMax) && optNum(slot.weightIncrementPct))));
+  const workoutsOk = all(data.workouts, (w) =>
+    id(w.id) && id(w.mesocycleId) && id(w.dayId) && date(w.date) && str(w.dayName) && typeof w.finished === "boolean"
+    && (w.finishedAt == null || str(w.finishedAt))
+    && (w.skippedSlotIds == null || (Array.isArray(w.skippedSlotIds) && w.skippedSlotIds.every(id)))
+    && all(w.exercises, (ex) => id(ex.slotId) && (ex.exerciseId == null || id(ex.exerciseId)) && str(ex.exerciseName)
+      && num(ex.order) && num(ex.repRangeMin) && num(ex.repRangeMax) && optNum(ex.weightIncrementPct) && optBool(ex.oneOff)
+      && all(ex.sets, (set) => optNum(set.weight) && optNum(set.reps) && optNum(set.baseWeight) && optNum(set.baseReps)
+        && optNum(set.setIndex) && optBool(set.isLogged) && optBool(set.done) && optBool(set.prefilled) && optBool(set.repsManual))));
+  if (!exercisesOk || !mesocyclesOk || !workoutsOk) return "This backup file is damaged or was edited. Nothing was imported.";
+  return null;
+}

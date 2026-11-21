@@ -3,6 +3,7 @@ import { WEEKDAY_LABELS, addDays, isoDate, jsDateToWeekdayIndex, parseLocalDate,
 import { DEFAULT_INCREMENT_PCT, blankSet, buildPrefilledSets, equivalentReps, isCompleteSet, nextSet } from "../progression.js";
 import { App, cleanCount, cssEscape, emptyMesoState, escapeHtml, fmtNum, getExerciseMuscleGroup, renderCurrentView, renderExerciseOptionsGrouped, renderMuscleGroupSelect, renderMuscleTag, icon, pageHeader } from "../ui.js";
 import { getExerciseHistory, getTodayContext, isTouchedSet } from "../workout.js";
+import { renderLineChart } from "../chart.js";
 
 const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -240,6 +241,24 @@ export function renderExerciseBlock(workout, ex, isGroupStart, isGroupEnd) {
   `;
 }
 
+// Two small charts over the exercise's sessions, oldest to newest: the
+// heaviest set, and total volume (weight × reps over all sets). Under double
+// progression the weight sits flat for weeks while reps climb, so weight
+// alone looks like no progress; volume moves with both. Deliberately not an
+// estimated 1RM: one rep/weight curve does not fit light and heavy lifts
+// (see pctPerRep in progression.js). Needs at least two sessions.
+function renderProgressCharts(rows) {
+  const sessions = rows
+    .map((r) => ({ label: r.date.slice(5).replace("-", "/"), sets: r.sets.filter(isCompleteSet) }))
+    .filter((r) => r.sets.length > 0)
+    .reverse();
+  if (sessions.length < 2) return "";
+  return `<div class="charts">
+    ${renderLineChart("Top set", "lb", sessions.map((r) => ({ label: r.label, value: Math.max(...r.sets.map((s) => s.weight)) })))}
+    ${renderLineChart("Volume", "lb", sessions.map((r) => ({ label: r.label, value: r.sets.reduce((sum, s) => sum + s.weight * s.reps, 0) })))}
+  </div>`;
+}
+
 export function renderHistorySheet(ex) {
   const rows = getExerciseHistory(ex.slotId, ex.exerciseId, ex.exerciseName);
   return `<div class="history-sheet-backdrop" data-action="close-history">
@@ -251,6 +270,7 @@ export function renderHistorySheet(ex) {
         </div>
         <button class="icon-btn" data-action="close-history" aria-label="Close">${icon("close")}</button>
       </div>
+      ${renderProgressCharts(rows)}
       ${rows.length === 0
         ? `<p class="muted">No history yet.</p>`
         : rows.map((r) => `<div class="history-row">

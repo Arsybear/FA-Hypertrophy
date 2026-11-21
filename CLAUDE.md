@@ -10,9 +10,11 @@ prefill. No RIR tracking, no volume-landmark dashboard — that was explicitly
 scoped out; see README.md for the feature list.
 
 Static PWA, zero dependencies, zero build step: plain HTML/CSS/vanilla JS +
-`localStorage`. All scripts are loaded via `<script>` tags in `index.html`
-(order matters — see below) and share the global scope; there is no bundler
-and no `package.json`.
+`localStorage`. The code is native ES modules loaded from one
+`<script type="module" src="js/main.js">`; there is no bundler and no
+`package.json`. It must keep working with no connection: nothing is loaded
+from another origin (no font or library CDN), and every file the app loads
+is listed in `sw.js`'s `ASSETS`.
 
 `html`/`body` are deliberately non-scrolling (`overflow: hidden`,
 `overscroll-behavior: none`, `height: 100%`) — this is what kills iOS
@@ -54,12 +56,17 @@ npx serve .
 python -m http.server
 ```
 
-Then open the printed URL. There is no lint config. `node scripts/test.js`
-is a small self-check of the pure logic (`js/schedule.js`,
-`js/progression.js`: history matching, double progression, weekday
-resolution) — run it after touching either file. Everything else is
-verified by exercising the UI in a browser (resize to ~390px width to check
-the mobile layout).
+Then open the printed URL. There is no lint config. `node scripts/test.mjs`
+is a small self-check of the logic that needs no browser (history matching,
+double progression, weekday resolution, copying a mesocycle, backup
+validation) plus two release checks: every loaded file is in `sw.js`'s
+`ASSETS`, and `APP_VERSION` equals `CACHE_NAME`. Run it before committing. Everything else is
+verified by exercising the UI in a browser. Chrome will not go narrower
+than ~500px, so check the phone layout in a 390px-wide same-origin iframe.
+The service worker serves cached files first: when testing a change,
+unregister it and clear caches (or serve with `Cache-Control: no-store`), or
+the old code runs. `window.FAH` exposes the modules (`FAH.Store`,
+`FAH.renderCurrentView()`, …) for seeding state from the console.
 
 ## Deployment
 
@@ -88,33 +95,62 @@ changes a cached asset without a `CACHE_NAME` bump.
 Even with that bump, GitHub Pages itself caches `sw.js` for 10 minutes
 (`Cache-Control: max-age=600`, not something this repo can override), so an
 installed instance can still take a while to even notice a new version
-exists. `App.updateAvailable` (`js/app.js`) tracks this: the `DOMContentLoaded`
+exists. `App.updateAvailable` (`js/ui.js`, set in `js/main.js`) tracks this: the `DOMContentLoaded`
 handler records whether a service worker was already controlling the page
 before registering, and if a *later* `controllerchange` fires (a newly
 activated worker taking over from that one, not the page's own first-ever
 activation), it sets the flag and — only if the user is on `#/settings` —
 re-renders to show it immediately; otherwise it's picked up next time they
-navigate there. `renderSettings` shows a banner with a "Refresh Now" button
+navigate there. `renderSettings` shows a banner with a "Refresh now" button
 (`reload-app` action, a plain `location.reload()`) when the flag is set.
 This is deliberately surfaced only on `#/settings`, not globally, so it
 never interrupts someone mid-workout on `#/today`.
 
 ## Architecture
 
-### Script load order (`index.html`)
+### Modules (`js/`)
 
-`js/storage.js` → `js/schedule.js` → `js/progression.js` → `js/app.js`.
-Each file defines top-level functions/objects in the shared global scope
-(no modules/exports) — later files call functions defined in earlier ones.
+- `main.js` — entry point: registers the routes, attaches the delegated
+  listeners, registers the service worker.
+- `store.js` — `Store` (all `localStorage` access), `validateBackup`.
+- `schedule.js` — dates and weekday-to-day-template resolution.
+- `progression.js` — double progression and the history matchers.
+- `workout.js` — workout generation, template reconciliation,
+  `getTodayContext`, `getExerciseHistory`.
+- `ui.js` — `App` state, escaping and form helpers, `pageHeader`, `icon`,
+  muscle tags, and the route registry (`registerRoute`,
+  `renderCurrentView`). Views call `renderCurrentView` from here, so no view
+  imports `main.js` (no import cycle).
+- `chart.js` — the inline-SVG line chart used in the History sheet.
+- `version.js` — `APP_VERSION`, shown in Settings; must equal the number in
+  `sw.js`'s `CACHE_NAME`.
+- `views/today.js`, `views/program.js`, `views/history.js`,
+  `views/settings.js` — one screen each.
 
-### Data model (`js/storage.js`)
+`schedule.js`, `progression.js` and `store.js` have no DOM access at import
+time, which is what lets `scripts/test.mjs` import them in Node.
+
+### Look (`css/style.css`, `icons/`)
+
+One dark theme by design (gym use on a phone), not a system-setting switch:
+near-black steel surfaces with a mulberry accent. `--accent` is for fills
+(white text passes on it), `--accent-soft` for text, icons and outlines on
+dark surfaces. Green (`--success`) means done, amber (`--warn`) in progress
+— in the week strip, the calendar, set rows and the progress bar alike.
+Inputs are 16px (anything smaller makes iOS zoom the page on focus) and tap
+targets are at least 44px (`--tap`). The mark (a great helm whose face
+plate is the letters FA) is drawn by `scripts/make_icons.py`, which writes
+`icons/icon.svg`, `icons/mark.svg` and the PNG sizes; change the mark there
+and re-run it rather than editing the outputs.
+
+### Data model (`js/store.js`)
 
 Three `localStorage` keys, all accessed through the `Store` object (never
 touch `localStorage` directly elsewhere):
 
 - `fah_exercises` — flat array, the global reusable exercise library. Each
   entry is `{id, name, muscleGroup}`; `muscleGroup` is one of the fixed
-  `MUSCLE_GROUPS` options in `js/app.js` (defaults to `"Other"` for entries
+  `MUSCLE_GROUPS` options in `js/ui.js` (defaults to `"Other"` for entries
   created before this field existed). Set once at creation via
   `Store.addExercise(name, muscleGroup)` — there's no separate edit flow for
   it. Weight units are pounds throughout the UI; nothing in the data model
@@ -125,14 +161,15 @@ touch `localStorage` directly elsewhere):
   default) — see `nextSet` below.
   Each real muscle group has its own validated categorical color
   (`--mg-*` custom properties in `css/style.css`, applied via
-  `renderMuscleTag()`/`muscleGroupClass()` in `js/app.js` — always go
+  `renderMuscleTag()`/`muscleGroupClass()` in `js/ui.js` — always go
   through these rather than hand-rolling a `.muscle-tag` span, so a new
   group can't accidentally skip the palette). "Other" intentionally has no
   hue slot (falls back to `--muted`) — the categorical method caps at ~8-10
   reliably distinguishable hues; a genuinely new 11th+ named group should
   reuse "Other" rather than get a hand-picked color. The palette was chosen
-  and validated with Claude's `dataviz` skill (`validate_palette.js`); redo
-  that validation if the hue set ever changes.
+  and validated with Claude's `dataviz` skill (`validate_palette.js`, dark
+  mode against `--surface`); redo that validation if the hue set or the
+  surface color ever changes.
 - `fah_mesocycles` — array of every mesocycle ever created. Exactly one has
   `active: true` at a time; `Store.getActiveMesocycle()` is the source of
   truth for what `#/today` and `#/program` operate on. Each mesocycle owns
@@ -170,13 +207,14 @@ reshuffles which weekday maps to which template, wrapping past Sunday back
 to Monday. This is why "finish workout" doesn't need to touch any schedule
 state.
 
-### Lazy workout generation + progression (`js/app.js` `generateWorkout`, `js/progression.js`)
+### Lazy workout generation + progression (`js/workout.js` `generateWorkout`, `js/progression.js`)
 
 `#/today` is date-aware, not just "today" — it reads an optional
 `?date=YYYY-MM-DD` query string off the hash (`currentDateParam()`),
-defaulting to the real current date, and renders Prev/Next/Today navigation
-(`renderDateNav`) so past days can be reopened and backfilled. A 📅 toggle
-next to that nav opens `renderCalendarPanel`, a read-only month view (one
+defaulting to the real current date, and renders the page header plus a
+Monday-to-Sunday strip of that date's week (`renderDateNav`: each day a
+link, arrows step a week, a "Today" button appears off today) so past days
+can be reopened and backfilled. A calendar button in the header opens `renderCalendarPanel`, a read-only month view (one
 month at a time, `App.ui.calendarMonth`, opening on the viewed date's month)
 with a ‹ › pager and a dot per training day marking
 finished/in-progress/untouched status. It pages from the start month to the
@@ -216,7 +254,7 @@ reason `confirm-substitute` rebuilds the sets' `baseWeight`/`baseReps` for
 the new exercise and blanks every set (anything already entered was the old
 exercise's and would be saved as the new one's history). The prediction is stored only in the set's
 `baseWeight`/`baseReps` and shown as the inputs' **placeholder**
-(`setWeightHint`/`setRepsHint` in `js/app.js`) — never written into
+(`setWeightHint`/`setRepsHint` in `js/views/today.js`) — never written into
 `weight`/`reps`, which hold only what the user typed. That's deliberate: a
 filled-in prediction looked like a logged set, so mid-workout you couldn't
 tell what was done, and finishing silently saved untouched predictions as
@@ -271,7 +309,7 @@ program since, and reconciling would also drop (with their logged sets) any
 exercise removed from the program since. It still gets
 `migrateLegacyPrefill`.
 
-Separately, `handleTodayChange` in `js/app.js` also carries a just-entered
+Separately, `handleTodayChange` in `js/views/today.js` also carries a just-entered
 **weight** (as a real value, not a hint) into every other not-yet-logged set
 of the same exercise **whose predicted `baseWeight` equals the edited set's**
 — if the prediction had all sets at one weight, same weight across all sets
@@ -289,7 +327,7 @@ Each set row also has a "done" checkbox (`set.done`, handled by
 placeholder hint — one tap logs a set done exactly as predicted — then locks
 both inputs (`disabled`) until unticked; if a box has no numeric hint either,
 the tick doesn't stick and focus moves to that box. When every set is done
-the card gets `.complete` (faint `--success` tint, ✓ after the name). `done`
+the card gets `.complete` (`--success` outline, check mark after the name). `done`
 is a tracking aid only — progression/history still go by `isCompleteSet`.
 `isSetDone()` treats any complete set on a *finished* workout as done, since
 workouts finished before this existed have no `done` flags; "Reopen
@@ -320,7 +358,7 @@ they occupy, leaving `oneOff` ones where they are.
 `#/program` edits the template directly, so anything done there is always
 "future" by definition.
 
-### Event handling (`js/app.js`)
+### Event handling (`js/main.js`)
 
 A global delegated `click` and `change` listener is attached **once** to
 the `#view` container at startup (`handleGlobalClick`/`handleGlobalChange`),
@@ -341,9 +379,31 @@ module-level `App.ui` object, reset on every `hashchange` but preserved
 across in-place re-renders triggered by an action (so an open form doesn't
 snap shut after a click inside it).
 
-### Views (hash routes, `renderCurrentView` in `js/app.js`)
+### Views (hash routes, `renderCurrentView` in `js/ui.js`)
 
 `#/today`, `#/program`, `#/history`, `#/settings` — each has a
 `render<Name>(container)` function and, where interactive, a
 `handle<Name>Action`/`handle<Name>Change` pair. All read from `Store` fresh
 on every call; there is no separate app-state layer.
+
+### Backup, copying a mesocycle, charts
+
+- **Backup** (`#/settings`): `Store.exportBackup()` is handed over as a JSON
+  file — through the share sheet where it takes files (an installed iOS app
+  cannot download), else as a download. Import is a trust boundary: ids,
+  dates and set numbers are rendered into attributes and text unescaped
+  everywhere (the app generates them), so `validateBackup` rejects the whole
+  file unless each has the exact shape the app writes. Keep it in step with
+  any new stored field that is rendered unescaped. Import replaces
+  everything after an inline confirm (`App.pendingImport`); the replaced
+  data is kept under `fah_before_import`.
+- **Copy** (`Store.cloneMesocycle`): new ids for the mesocycle, its days and
+  slots, inactive, no workouts. Day templates are offsets from the start
+  weekday, so the copy starts on the same weekday as the original (first
+  such date after its planned end, or after today) to keep every training
+  day on its weekday.
+- **Charts** (`js/chart.js`, History sheet, two or more sessions): top-set
+  weight and total volume per session. Not an estimated 1RM, for the same
+  reason `nextSet` does not use one. Single series, so no legend; the
+  readout shows the latest point or the one hovered/tapped
+  (`handleChartPoint`, delegated on `#overlay-root`).

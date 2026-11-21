@@ -471,7 +471,26 @@ label input, label select { margin-top: 4px; }
 }
 .history-sheet-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
 
+/* ---------- charts (history sheet) ---------- */
+.charts { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin: 6px 0 12px; }
+.chart { margin: 0; padding: 10px; border-radius: var(--radius-sm); background: var(--surface-2); }
+.chart figcaption { display: flex; flex-direction: column; gap: 1px; margin-bottom: 6px; }
+.chart-title { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
+.chart-readout { font-size: 14px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.chart svg { display: block; width: 100%; height: auto; overflow: visible; touch-action: pan-y; }
+.chart-grid { stroke: var(--border); stroke-width: 1; }
+.chart-line { fill: none; stroke: var(--accent-soft); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; vector-effect: non-scaling-stroke; }
+.chart-area { fill: var(--accent-soft); opacity: 0.1; }
+.chart-point rect { fill: transparent; }
+.chart-point circle { fill: var(--accent-soft); stroke: var(--surface-2); stroke-width: 2; opacity: 0; }
+.chart-point.is-last circle, .chart-point.active circle { opacity: 1; }
+.chart-axis { display: flex; justify-content: space-between; gap: 6px; margin-top: 4px; font-size: 10px; font-variant-numeric: tabular-nums; }
+
 /* ---------- settings ---------- */
+.ok-text { color: var(--success); font-size: 13px; margin: 6px 0; }
+.file-btn { position: relative; margin: 0; color: var(--text); overflow: hidden; }
+.file-btn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+.meso-item .form-actions { margin: 0; align-items: center; flex: none; }
 .meso-list .card { margin-bottom: 8px; }
 .meso-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .meso-item > div:first-child { min-width: 0; display: flex; flex-direction: column; gap: 2px; overflow-wrap: anywhere; }

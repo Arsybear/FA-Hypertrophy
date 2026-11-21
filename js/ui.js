@@ -2,7 +2,7 @@ import { Store } from "./store.js";
 
 // updateAvailable lives outside App.ui (which resets on every hashchange)
 // since it needs to persist across navigation until the user reloads.
-export const App = { ui: {}, updateAvailable: false };
+export const App = { ui: {}, updateAvailable: false, pendingImport: null };
 
 export const MUSCLE_GROUPS = [
   "Chest", "Back", "Shoulders", "Biceps", "Triceps",
