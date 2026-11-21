@@ -1,13 +1,14 @@
 import { Store } from "../store.js";
 import { MONTHS_SHORT } from "../schedule.js";
-import { isCompleteSet } from "../progression.js";
-import { App, escapeHtml, getExerciseMuscleGroup, icon, metaLine, pageHeader, plural, renderCurrentView, renderMuscleTag } from "../ui.js";
+import { exercisePR, isCompleteSet } from "../progression.js";
+import { App, escapeHtml, getExerciseMuscleGroup, icon, metaLine, pageHeader, plural, renderCurrentView, renderMuscleTag, renderPrBadge } from "../ui.js";
 
 export function renderHistory(container) {
   const workouts = Store.getWorkouts()
     .filter((w) => w.finished)
     .sort((a, b) => (a.date < b.date ? 1 : -1));
   const mesos = Store.getMesocycles();
+  const all = Store.getWorkouts();
 
   if (workouts.length === 0) {
     container.innerHTML = `${pageHeader("History")}
@@ -36,7 +37,7 @@ export function renderHistory(container) {
         ${open ? `<div class="history-detail">
           ${[...w.exercises].sort((a, b) => a.order - b.order).map((ex) => `
             <div class="history-exercise">
-              <span>${renderMuscleTag(getExerciseMuscleGroup(ex.exerciseId, ex.exerciseName))} <strong>${escapeHtml(ex.exerciseName)}</strong></span>
+              <span>${renderMuscleTag(getExerciseMuscleGroup(ex.exerciseId, ex.exerciseName))} <span class="ex-title"><strong>${escapeHtml(ex.exerciseName)}</strong>${renderPrBadge(exercisePR(all, w, ex))}</span></span>
               <span class="set-chips">${ex.sets.map((s) => isCompleteSet(s) ? `<span class="set-chip">${s.weight}×${s.reps}</span>` : `<span class="set-chip empty">—</span>`).join("")}</span>
             </div>`).join("")}
         </div>` : ""}

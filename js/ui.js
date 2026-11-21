@@ -40,11 +40,22 @@ export function cssEscape(s) {
 
 // Workout entries from before exercises had ids carry only the name, so the
 // name is the fallback (library names are unique, ignoring case).
-export function getExerciseMuscleGroup(exerciseId, exerciseName) {
+// The library entry a workout exercise refers to: by id, else by name
+// (entries with a missing or stale id). Null when neither matches.
+export function findLibraryExercise(exerciseId, exerciseName) {
   const library = Store.getExercises();
   const name = exerciseName ? exerciseName.toLowerCase() : null;
-  const exercise = library.find((e) => e.id === exerciseId)
-    || (name && library.find((e) => e.name.toLowerCase() === name));
+  return library.find((e) => e.id === exerciseId)
+    || (name && library.find((e) => e.name.toLowerCase() === name)) || null;
+}
+
+// exercisePR's result as a badge beside an exercise name (Today, History).
+export function renderPrBadge(pr) {
+  return pr ? `<span class="badge pr">${pr === "weight" ? "Weight PR" : "Rep PR"}</span>` : "";
+}
+
+export function getExerciseMuscleGroup(exerciseId, exerciseName) {
+  const exercise = findLibraryExercise(exerciseId, exerciseName);
   return (exercise && exercise.muscleGroup) || "Other";
 }
 
@@ -62,9 +73,10 @@ export function renderExerciseOptionsGrouped(excludeId, onlyGroup) {
     </optgroup>`).join("");
 }
 
-export function renderMuscleGroupSelect(dataRole, dataAttrs = "", lockedValue = null) {
+export function renderMuscleGroupSelect(dataRole, dataAttrs = "", lockedValue = null, selectedValue = null) {
+  const selected = lockedValue || selectedValue;
   return `<select data-role="${dataRole}" ${dataAttrs} aria-label="Muscle group" ${lockedValue ? 'disabled data-locked="true"' : ""}>
-    ${MUSCLE_GROUPS.map((g) => `<option value="${g}" ${g === lockedValue ? "selected" : ""}>${g}</option>`).join("")}
+    ${MUSCLE_GROUPS.map((g) => `<option value="${g}" ${g === selected ? "selected" : ""}>${g}</option>`).join("")}
   </select>`;
 }
 
@@ -120,6 +132,7 @@ const ICONS = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   close: '<path d="M6 6l12 12M18 6 6 18"/>',
   check: '<path d="m5 12 5 5 9-10"/>',
+  edit: '<path d="M4 20h4L19 9l-4-4L4 16v4z"/><path d="m13.5 6.5 4 4"/>',
   more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
 };
 

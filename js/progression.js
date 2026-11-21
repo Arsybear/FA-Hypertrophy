@@ -111,6 +111,27 @@ export function findMatchingExercise(workout, matchers) {
   return null;
 }
 
+// Whether this workout's entry `ex` beat every earlier finished workout of
+// the same exercise: "weight" (heaviest complete set ever), else "reps" (a
+// set with more reps than any earlier set at that weight or heavier), else
+// null — also when there is nothing earlier to beat.
+export function exercisePR(workouts, workout, ex) {
+  const matchers = exerciseMatchers(ex.slotId, ex.exerciseId, ex.exerciseName);
+  const earlier = workouts
+    .filter((w) => w.finished && w.date < workout.date)
+    .flatMap((w) => w.exercises.filter((e) => matchers.some((match) => match(e))))
+    .flatMap((e) => e.sets.filter(isCompleteSet));
+  const mine = ex.sets.filter(isCompleteSet);
+  if (earlier.length === 0 || mine.length === 0) return null;
+  const heaviest = (sets) => Math.max(...sets.map((s) => s.weight));
+  if (heaviest(mine) > heaviest(earlier)) return "weight";
+  const repPR = mine.some((s) => {
+    const atLeast = earlier.filter((e) => e.weight >= s.weight);
+    return atLeast.length > 0 && s.reps > Math.max(...atLeast.map((e) => e.reps));
+  });
+  return repPR ? "reps" : null;
+}
+
 // Find the most recent finished workout (date < beforeIsoDate) where this
 // exercise has a complete set at setIndex. Same day template first (the same
 // exercise can run heavier on one day than another); only when that day has

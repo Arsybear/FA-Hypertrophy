@@ -1,5 +1,5 @@
 import { Store, cleanCount, cleanPct } from "../store.js";
-import { WEEKDAY_LABELS, formatDay, getDayWeekdayOffset, mesocycleStartWeekday } from "../schedule.js";
+import { WEEKDAY_LABELS, formatDay, getDayWeekdayOffset, offsetWeekday, totalShiftDays } from "../schedule.js";
 import { DEFAULT_INCREMENT_PCT } from "../progression.js";
 import { App, cssEscape, emptyMesoState, escapeHtml, getExerciseMuscleGroup, icon, pageHeader, plural, renderCurrentView, renderExerciseOptionsGrouped, renderFormError, renderMuscleGroupSelect, renderMuscleTag } from "../ui.js";
 
@@ -10,8 +10,9 @@ export function renderProgram(container) {
   const usedOffsets = new Set(meso.days.map((d) => getDayWeekdayOffset(d)));
   const availableOffsets = [0, 1, 2, 3, 4, 5, 6].filter((i) => !usedOffsets.has(i));
 
+  const shifted = totalShiftDays(meso);
   container.innerHTML = `
-    ${pageHeader(meso.name, [plural(meso.numWeeks, "week"), `starts ${formatDay(meso.startDate)}`])}
+    ${pageHeader(meso.name, [plural(meso.numWeeks, "week"), `starts ${formatDay(meso.startDate)}`, shifted > 0 && `shifted ${plural(shifted, "day")}`])}
     ${sortedDays.length === 0 ? `<p class="muted intro">Add the days you train. Each day holds its exercises and repeats every week.</p>` : ""}
     ${sortedDays.map((day) => renderDayCard(meso, day)).join("")}
     <div class="add-exercise-area">
@@ -22,7 +23,7 @@ export function renderProgram(container) {
              <input type="text" data-role="new-day-name" placeholder="Day name (e.g. Push)" aria-label="Day name">
              <label>Trains on
                <select data-role="new-day-weekday">
-                 ${availableOffsets.map((i) => `<option value="${i}">${WEEKDAY_LABELS[(mesocycleStartWeekday(meso) + i) % 7]}</option>`).join("")}
+                 ${availableOffsets.map((i) => `<option value="${i}">${WEEKDAY_LABELS[offsetWeekday(meso, i)]}</option>`).join("")}
                </select>
              </label>
              <div class="form-actions">
@@ -38,7 +39,7 @@ export function renderProgram(container) {
 }
 
 export function renderDayCard(meso, day) {
-  const weekday = WEEKDAY_LABELS[(mesocycleStartWeekday(meso) + getDayWeekdayOffset(day)) % 7];
+  const weekday = WEEKDAY_LABELS[offsetWeekday(meso, getDayWeekdayOffset(day))];
   const sortedExercises = [...day.exercises].sort((a, b) => a.order - b.order);
   const removeConfirm = App.ui.removeDayConfirm === day.id;
   const addExOpen = App.ui.addExerciseToDay === day.id;

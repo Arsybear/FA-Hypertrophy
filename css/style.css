@@ -128,6 +128,9 @@ h3 {
 }
 .notice a { color: var(--accent-soft); }
 .notice.error { border-left-color: var(--danger); }
+/* A notice with its own action (Undo) on the right. */
+.notice-action { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.notice-action .btn { flex: none; }
 .icon { width: 20px; height: 20px; flex: none; }
 /* A meta line's parts ("6 weeks · starts Mon, Nov 2") wrap between parts,
    never inside one. */
@@ -231,10 +234,10 @@ input:disabled, select:disabled { opacity: 0.6; }
 input::placeholder { color: var(--muted); opacity: 0.75; }
 input[type="number"] { font-variant-numeric: tabular-nums; -moz-appearance: textfield; }
 input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; }
-input[type="radio"] { width: 20px; height: 20px; min-height: 0; margin: 0; flex: none; accent-color: var(--accent); }
+input[type="radio"], .check-row input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; margin: 0; flex: none; accent-color: var(--accent); }
 label { display: block; margin-bottom: 10px; font-size: 13px; color: var(--muted); }
 /* A radio choice is one full-width row, tall enough to hit mid-set. */
-label:has(> input[type="radio"]) { display: flex; align-items: center; gap: 10px; min-height: var(--tap); margin: 0; font-size: 14px; }
+label:has(> input[type="radio"]), .check-row { display: flex; align-items: center; gap: 10px; min-height: var(--tap); margin: 0; font-size: 14px; }
 label input, label select { margin-top: 4px; }
 
 .inline-form {
@@ -352,9 +355,26 @@ label input, label select { margin-top: 4px; }
 .exercise-actions { display: flex; flex: none; margin: -8px -8px 0 0; }
 /* The card's other actions, behind the "more" button: labelled, so nothing
    has to be guessed from an icon. */
-.exercise-menu { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 10px; }
+.exercise-menu { display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; gap: 6px; margin-top: 10px; }
 .exercise-menu .btn { flex-direction: column; gap: 2px; padding: 6px 4px; font-size: 12px; }
 .ex-done-mark { display: inline-flex; vertical-align: -3px; margin-left: 6px; color: var(--success); }
+.ex-name .badge { margin-left: 8px; vertical-align: 2px; }
+.ex-note { font-size: 13px; color: var(--text); opacity: 0.8; font-style: italic; overflow-wrap: anywhere; }
+.hint { font-size: 12px; margin: 2px 0 10px; }
+
+/* A missed training day, offered on the viewed date. */
+.missed-card { border-color: color-mix(in srgb, var(--warn) 45%, var(--border)); }
+.missed-title { font-size: 17px; font-weight: 700; }
+.missed-card .check-row { margin-top: 8px; }
+.missed-card .btn.wide { margin-top: 4px; }
+
+/* A finished workout's totals, three tiles in a row. */
+.summary-card { display: grid; grid-template-columns: repeat(3, 1fr); text-align: center; padding: 12px 6px; }
+.summary-card > div { display: flex; flex-direction: column; gap: 2px; }
+.summary-card > div + div { border-left: 1px solid var(--border); }
+.summary-card strong { font-size: 22px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.summary-card .muted { font-size: 11px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.summary-card .has-pr strong { color: var(--success); }
 
 .muscle-tag {
   display: inline-block;
@@ -493,6 +513,7 @@ label input, label select { margin-top: 4px; }
 .history-detail { padding: 4px 14px 12px; border-top: 1px solid var(--border); }
 .history-exercise { padding: 10px 0 2px; }
 .history-exercise > span:first-child { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; }
+.ex-title .badge { margin-left: 8px; vertical-align: 1px; }
 .history-row { padding: 10px 0; border-top: 1px solid var(--border); }
 .history-row .muted { display: block; margin-bottom: 6px; }
 .set-chips { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -566,6 +587,7 @@ label input, label select { margin-top: 4px; }
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }
+.badge.pr { background: color-mix(in srgb, var(--success) 18%, transparent); color: var(--success); padding: 3px 8px; font-size: 10px; white-space: nowrap; }
 .active-meso { border-color: var(--accent); }
 .update-banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; border-color: var(--accent); }
 .about { text-align: center; margin-top: 24px; }
@@ -579,6 +601,10 @@ label input, label select { margin-top: 4px; }
 .list-row .icon-btn { margin-right: -8px; }
 .list-row .form-actions { margin: 0; flex: none; }
 .list-row > .muted { flex: none; }
+.row-actions { display: flex; align-items: center; gap: 4px; flex: none; margin-right: -8px; }
+.row-actions .icon-btn { margin: 0; }
+.list-row.editing { display: block; padding: 0; }
+.list-row.editing .inline-form { margin: 8px 0; }
 
 /* ---------- bottom nav ---------- */
 .bottom-nav {

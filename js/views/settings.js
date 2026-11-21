@@ -1,7 +1,8 @@
 import { APP_VERSION } from "../version.js";
 import { Store, cleanCount, validateBackup } from "../store.js";
-import { WEEKDAY_LABELS, formatDay, isoDate, jsDateToWeekdayIndex, mesocycleStartWeekday, parseLocalDate } from "../schedule.js";
-import { App, escapeHtml, icon, metaLine, pageHeader, plural, renderCurrentView, renderMuscleTag } from "../ui.js";
+import { WEEKDAY_LABELS, formatDay, isIsoDate, isoDate, jsDateToWeekdayIndex, mesocycleStartWeekday, parseLocalDate } from "../schedule.js";
+import { App, escapeHtml, icon, metaLine, pageHeader, plural, renderCurrentView, renderFormError, renderMuscleGroupSelect, renderMuscleTag } from "../ui.js";
+import { refreshPredictions } from "../workout.js";
 
 // One line under a mesocycle's name in the list (HTML, see metaLine).
 function mesoSummary(m) {
@@ -83,16 +84,21 @@ export function renderSettings(container) {
     <h3>Exercise library</h3>
     ${exercises.length === 0 ? `<p class="muted">No exercises yet.</p>` : `
       <div class="card list-card">
-        ${exercises.map((ex) => `
+        ${exercises.map((ex) => App.ui.editExerciseOpen === ex.id ? renderExerciseEditForm(ex) : `
           <div class="list-row">
             <div>
               ${renderMuscleTag(ex.muscleGroup || "Other")}
               <strong>${escapeHtml(ex.name)}</strong>
+              ${ex.note ? `<span class="muted">${escapeHtml(ex.note)}</span>` : ""}
             </div>
-            ${inUse.has(ex.id) ? `<span class="muted">In a program</span>` : App.ui.removeExerciseOpen === ex.id
+            ${App.ui.removeExerciseOpen === ex.id
               ? `<span class="form-actions"><button class="btn small danger" data-action="confirm-remove-exercise" data-id="${ex.id}">Remove</button>
                  <button class="btn small ghost" data-action="cancel-remove-exercise" data-id="${ex.id}">Cancel</button></span>`
-              : `<button class="icon-btn" data-action="open-remove-exercise" data-id="${ex.id}" aria-label="Remove ${escapeHtml(ex.name)}">${icon("trash")}</button>`}
+              : `<span class="row-actions">
+                  ${inUse.has(ex.id) ? `<span class="muted">In a program</span>` : ""}
+                  <button class="icon-btn" data-action="open-edit-exercise" data-id="${ex.id}" aria-label="Edit ${escapeHtml(ex.name)}">${icon("edit")}</button>
+                  ${inUse.has(ex.id) ? "" : `<button class="icon-btn" data-action="open-remove-exercise" data-id="${ex.id}" aria-label="Remove ${escapeHtml(ex.name)}">${icon("trash")}</button>`}
+                </span>`}
           </div>`).join("")}
       </div>
     `}
@@ -100,11 +106,32 @@ export function renderSettings(container) {
   `;
 }
 
+// Roles here must not start with "edit-": those are the active mesocycle's
+// fields, saved on change (handleSettingsChange).
+function renderExerciseEditForm(ex) {
+  const attrs = `data-id="${ex.id}"`;
+  // After a refused save the form shows what was typed, not the stored values.
+  const v = App.ui.exerciseDraft || { name: ex.name, muscleGroup: ex.muscleGroup || "Other", note: ex.note || "" };
+  return `<div class="list-row editing">
+    <div class="inline-form">
+      <p class="form-title">Edit exercise</p>
+      ${renderFormError()}
+      <label>Name <input type="text" data-role="exlib-name" value="${escapeHtml(v.name)}"></label>
+      <label>Muscle group ${renderMuscleGroupSelect("exlib-group", "", null, v.muscleGroup)}</label>
+      <label>Note <input type="text" data-role="exlib-note" maxlength="200" value="${escapeHtml(v.note)}" placeholder="Optional"></label>
+      <div class="form-actions">
+        <button class="btn small primary" data-action="save-exercise" ${attrs}>Save</button>
+        <button class="btn small ghost" data-action="cancel-edit-exercise" ${attrs}>Cancel</button>
+      </div>
+    </div>
+  </div>`;
+}
+
 // " from Sat, Nov 21" for the import confirmation; exportedAt is outside
 // input, so anything that is not a date is left out.
 function backupDate(backup) {
   const day = String(backup.exportedAt || "").slice(0, 10);
-  return /^\d{4}-\d{2}-\d{2}$/.test(day) && isoDate(parseLocalDate(day)) === day ? ` from ${formatDay(day)}` : "";
+  return isIsoDate(day) ? ` from ${formatDay(day)}` : "";
 }
 
 // Hands the backup to the user as a file. An installed iOS app cannot
@@ -161,15 +188,26 @@ export function handleSettingsAction(action, btn, view) {
     App.pendingImport = null;
     App.ui.backupMessage = imported ? "Backup imported." : "Not enough storage space for this backup. Nothing was changed.";
     App.ui.backupError = !imported;
+    if (imported) refreshPredictions();
   } else if (action === "cancel-import") {
     App.pendingImport = null;
   } else if (action === "create-meso") {
     const name = view.querySelector('[data-role="new-meso-name"]').value.trim() || "New Mesocycle";
     const numWeeks = cleanCount(view.querySelector('[data-role="new-meso-weeks"]').value || 6);
-    const startDate = view.querySelector('[data-role="new-meso-start-date"]').value || isoDate(new Date());
+    const picked = view.querySelector('[data-role="new-meso-start-date"]').value;
+    const startDate = isIsoDate(picked) ? picked : isoDate(new Date());
     Store.createMesocycle({ name, numWeeks, startDate });
+  } else if (action === "open-edit-exercise") {
+    Object.assign(App.ui, { editExerciseOpen: btn.dataset.id, exerciseDraft: null, removeExerciseOpen: null, formError: null });
+  } else if (action === "cancel-edit-exercise") {
+    Object.assign(App.ui, { editExerciseOpen: null, exerciseDraft: null, formError: null });
+  } else if (action === "save-exercise") {
+    const value = (role) => view.querySelector(`[data-role="${role}"]`).value;
+    const draft = { name: value("exlib-name"), muscleGroup: value("exlib-group"), note: value("exlib-note") };
+    if (Store.updateExercise(btn.dataset.id, draft)) Object.assign(App.ui, { editExerciseOpen: null, exerciseDraft: null, formError: null });
+    else Object.assign(App.ui, { exerciseDraft: draft, formError: draft.name.trim() ? "Another exercise already has that name." : "Give it a name." });
   } else if (action === "open-remove-exercise") {
-    App.ui.removeExerciseOpen = btn.dataset.id;
+    Object.assign(App.ui, { removeExerciseOpen: btn.dataset.id, editExerciseOpen: null, exerciseDraft: null, formError: null });
   } else if (action === "cancel-remove-exercise") {
     App.ui.removeExerciseOpen = null;
   } else if (action === "confirm-remove-exercise") {
@@ -187,7 +225,7 @@ export function handleSettingsAction(action, btn, view) {
 // "Falls on a <Weekday>" hint text next to a start-date input as the user
 // picks a date.
 export function updateStartWeekdayHint(dateInput, hintDataRole) {
-  if (!dateInput.value) return;
+  if (!isIsoDate(dateInput.value)) return;
   const weekday = jsDateToWeekdayIndex(parseLocalDate(dateInput.value));
   const hint = document.querySelector(`[data-role="${hintDataRole}"]`);
   if (hint) hint.textContent = WEEKDAY_LABELS[weekday];
@@ -202,6 +240,8 @@ export function handleSettingsChange(target) {
   // A cleared name or start date is not saved (an empty start date would
   // turn every day into a rest day); the box goes back to the stored value.
   if (field !== "numWeeks" && !target.value.trim()) { target.value = active[field]; return; }
+  // A date the schedule can't use (year 275760) is not saved either.
+  if (field === "startDate" && !isIsoDate(target.value)) { target.value = active.startDate; return; }
   Store.updateMesocycle(active.id, { [field]: parse(target.value) });
   if (field === "numWeeks") target.value = parse(target.value);
   if (target.dataset.role === "edit-start-date") {

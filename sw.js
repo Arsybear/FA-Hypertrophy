@@ -1,4 +1,4 @@
-const CACHE_NAME = "fa-hypertrophy-v29";
+const CACHE_NAME = "fa-hypertrophy-v30";
 const ASSETS = [
   "./",
   "index.html",
@@ -41,20 +41,19 @@ self.addEventListener("activate", (event) => {
   self.clients.claim();
 });
 
+// Cache first, and the cache is only ever written at install. Writing fresh
+// network responses into it while the app runs (stale-while-revalidate, the
+// earlier version) could leave one cache holding files from two versions: a
+// deploy lands, half the modules revalidate, the signal drops, and the next
+// offline launch links a new module against an old one and shows a blank
+// page. A new version arrives whole or not at all: the browser re-checks
+// sw.js, the new worker precaches everything under a new CACHE_NAME, and
+// activate drops the old cache.
 self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   event.respondWith(
-    caches.match(event.request).then((cached) => {
-      const fetchPromise = fetch(event.request)
-        .then((res) => {
-          if (res.ok) {
-            const clone = res.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, clone));
-          }
-          return res;
-        })
-        .catch(() => cached || Response.error());
-      return cached || fetchPromise;
-    })
+    caches.open(CACHE_NAME)
+      .then((cache) => cache.match(event.request, { ignoreSearch: true }))
+      .then((cached) => cached || fetch(event.request))
   );
 });

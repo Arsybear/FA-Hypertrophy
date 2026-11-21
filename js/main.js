@@ -15,7 +15,28 @@ import { handleImportFile, handleSettingsAction, handleSettingsChange, renderSet
 // from the browser console (and for seeding state in manual tests).
 window.FAH = { ...store, ...schedule, ...progression, ...ui, ...workout };
 
+// "#/today" with no ?date= means the real current date, looked up again on
+// every event. Past midnight that is a different day from the one on screen:
+// typed values found no set to go to and Finish finished the new day's blank
+// workout. So when the date has changed under a screen that was showing
+// "today", the address is pinned to the day it was drawn for (replaceState
+// fires no hashchange), and the events land on the workout the user sees.
+let knownToday = schedule.isoDate(new Date());
+function pinViewedDay(always) {
+  const now = schedule.isoDate(new Date());
+  if (now === knownToday) return false;
+  const previous = knownToday;
+  knownToday = now;
+  if (currentRoute() !== "today" || workout.currentDateParam()) return true;
+  const meso = Store.getActiveMesocycle();
+  const shown = meso && Store.findWorkoutByDate(meso.id, previous);
+  const midWorkout = shown && !shown.finished && shown.exercises.some((ex) => ex.sets.some(workout.isTouchedSet));
+  if (always || midWorkout) history.replaceState(null, "", `#/today?date=${previous}`);
+  return true;
+}
+
 export function handleGlobalClick(e) {
+  pinViewedDay(true);
   const btn = e.target.closest("[data-action]");
   // An empty data-action is a click shield (the history sheet): it stops the
   // click from reaching the backdrop's action and does nothing itself.
@@ -62,6 +83,7 @@ export function handleNewNameTyped(inputEl) {
 }
 
 export function handleGlobalChange(e) {
+  pinViewedDay(true);
   const t = e.target;
   const route = currentRoute();
   if (route === "today" && t.matches('input[data-role="set-done"]')) handleSetDoneChange(t);
@@ -80,7 +102,13 @@ registerRoute("program", renderProgram);
 registerRoute("history", renderHistory);
 registerRoute("settings", renderSettings);
 
-window.addEventListener("hashchange", () => { App.ui = {}; renderCurrentView(); });
+window.addEventListener("hashchange", () => {
+  App.ui = {};
+  // A navigation draws "today" for the real current date: that is now the
+  // day on screen (see pinViewedDay).
+  knownToday = schedule.isoDate(new Date());
+  renderCurrentView();
+});
 window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("view").addEventListener("click", handleGlobalClick);
   document.getElementById("view").addEventListener("change", handleGlobalChange);
@@ -94,6 +122,17 @@ window.addEventListener("DOMContentLoaded", () => {
   document.addEventListener("keydown", (e) => {
     const close = e.key === "Escape" && document.querySelector('#overlay-root button[data-action^="close-"]');
     if (close) close.click();
+  });
+  // A set value is saved on "change", which fires when the box loses focus.
+  // A phone locked between sets can end the app with the box still focused,
+  // so going to the background commits it. Coming back on a later day shows
+  // that day, unless a workout was left half logged (it stays on screen).
+  document.addEventListener("visibilitychange", () => {
+    if (document.hidden) {
+      if (document.activeElement && document.activeElement.matches("input, select")) document.activeElement.blur();
+    } else if (pinViewedDay(false)) {
+      renderCurrentView();
+    }
   });
   Store.onWriteError = showStorageError;
   Store.normalize();

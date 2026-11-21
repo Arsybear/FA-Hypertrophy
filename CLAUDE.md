@@ -78,14 +78,17 @@ step needed. All asset references are relative paths (no leading `/`), which
 is required for the app to work correctly under this project subpath rather
 than a domain root.
 
-The app is a PWA with a service worker (`sw.js`) that does
-stale-while-revalidate caching of `sw.js`'s `ASSETS` list (`index.html`,
-`css/style.css`, every `js/*.js`, `manifest.json`). An already-installed
-PWA instance (a phone home-screen install in particular) only picks up a
-real update when `CACHE_NAME` changes — that's what triggers `install` to
-fetch a genuinely fresh set and `activate` to drop the old cache; otherwise
-it can keep serving a stale or *mixed* asset set (e.g. new JS paired with
-old CSS) until requests happen to individually revalidate. **Any commit
+The app is a PWA with a service worker (`sw.js`) that precaches `sw.js`'s
+`ASSETS` list (`index.html`, `css/style.css`, every `js/*.js`,
+`manifest.json`, the icons) at install and then serves cache first. The
+cache is written only at install (with `cache: "reload"`, past the browser's
+HTTP cache), never while the app runs: an earlier stale-while-revalidate
+version wrote fresh responses into the current cache, so a deploy followed
+by a dropped connection could leave one cache holding modules from two
+versions, and the next offline launch failed to link them (blank page). An
+installed instance therefore changes only when `CACHE_NAME` changes — that
+is what makes `install` fetch a whole fresh set and `activate` drop the old
+cache; without a bump a deployed change never reaches it. **Any commit
 that changes one of those cached files must also bump `CACHE_NAME` in
 `sw.js` in the same commit** — this has silently broken a deployed feature
 twice before. A `scripts/hooks/pre-commit` hook enforces this (run once per
@@ -374,6 +377,17 @@ they occupy, leaving `oneOff` ones where they are.
 "future" by definition.
 
 ### Event handling (`js/main.js`)
+
+`#/today` with no `?date=` means the real current date, re-read on every
+event. `pinViewedDay` guards the day changing under an open screen (a
+session past midnight, or the app resumed the next day): on a click or
+change the address is pinned to the day the screen was drawn for
+(`history.replaceState`, no hashchange), so typed values and Finish land on
+the workout the user is looking at; on return from the background it pins
+only when that workout was left half logged, otherwise the new day shows.
+Going to the background also blurs a focused input: set values are saved on
+`change`, and a phone locked between sets could end the app before it
+fired.
 
 A global delegated `click` and `change` listener is attached **once** to
 the `#view` container at startup (`handleGlobalClick`/`handleGlobalChange`),

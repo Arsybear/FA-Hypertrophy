@@ -56,15 +56,56 @@ export function getDayWeekdayOffset(day) {
   return day.weekdayOffset ?? day.order ?? 0;
 }
 
+// Shifts ("shift mesocycle to fit" after a missed day): each
+// { date, days } inserts `days` rest days starting at `date`, and every later
+// real date maps back by those days. Sorted by date, never overlapping. A
+// mesocycle without `shifts` has none.
+export function totalShiftDays(meso, uptoIso = null) {
+  return (meso.shifts || [])
+    .filter((s) => uptoIso == null || s.date <= uptoIso)
+    .reduce((sum, s) => sum + s.days, 0);
+}
+
+// The date on the unshifted template calendar that a real date stands for.
+// A gap day is paused at its shift's own date.
+export function schedulePosition(meso, date) {
+  const iso = isoDate(date);
+  let back = 0;
+  for (const s of meso.shifts || []) {
+    if (iso < s.date) break;
+    if (iso < isoDate(addDays(parseLocalDate(s.date), s.days))) {
+      return { date: addDays(parseLocalDate(s.date), -back), gap: true };
+    }
+    back += s.days;
+  }
+  return { date: addDays(date, -back), gap: false };
+}
+
 // Resolve which day template (if any) trains on `date`, given a mesocycle's
-// startDate (whose weekday anchors offset 0) and each day's own
+// startDate (whose weekday anchors offset 0), its shifts, and each day's own
 // weekdayOffset. Returns the day template object, or null if `date` is a
-// rest day (no day template claims that offset).
+// rest day (no day template claims that offset, or a shift's gap day).
 export function resolveDayForDate(mesocycle, date) {
   if (!mesocycle || !mesocycle.days || mesocycle.days.length === 0) return null;
-  const weekday = jsDateToWeekdayIndex(date);
+  const position = schedulePosition(mesocycle, date);
+  if (position.gap) return null;
+  const weekday = jsDateToWeekdayIndex(position.date);
   const offset = (weekday - mesocycleStartWeekday(mesocycle) + 7) % 7;
   return mesocycle.days.find((d) => getDayWeekdayOffset(d) === offset) || null;
+}
+
+export function weekNumber(meso, date) {
+  return Math.floor(daysBetween(parseLocalDate(meso.startDate), schedulePosition(meso, date).date) / 7) + 1;
+}
+
+// Last day of the planned weeks, moved out by the shifts.
+export function plannedEndIso(meso) {
+  return isoDate(addDays(parseLocalDate(meso.startDate), meso.numWeeks * 7 - 1 + totalShiftDays(meso)));
+}
+
+// The weekday (0 = Monday) a day template with this offset trains on now.
+export function offsetWeekday(meso, offset) {
+  return (mesocycleStartWeekday(meso) + offset + totalShiftDays(meso)) % 7;
 }
 
 export const WEEKDAY_LABELS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];

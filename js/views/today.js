@@ -1,8 +1,8 @@
-import { Store, cleanCount, cleanPct, uid } from "../store.js";
-import { WEEKDAY_LABELS, addDays, daysBetween, formatDay, formatShortDate, isoDate, jsDateToWeekdayIndex, parseLocalDate, resolveDayForDate } from "../schedule.js";
-import { DEFAULT_INCREMENT_PCT, blankSet, buildPrefilledSets, equivalentReps, isCompleteSet } from "../progression.js";
-import { App, cssEscape, emptyMesoState, escapeHtml, fmtNum, getExerciseMuscleGroup, icon, pageHeader, plural, renderCurrentView, renderExerciseOptionsGrouped, renderFormError, renderMuscleGroupSelect, renderMuscleTag } from "../ui.js";
-import { getExerciseHistory, getTodayContext, isTouchedSet } from "../workout.js";
+import { Store, cleanCount, cleanPct, cleanSetValue, uid } from "../store.js";
+import { WEEKDAY_LABELS, addDays, daysBetween, formatDay, formatShortDate, isoDate, jsDateToWeekdayIndex, parseLocalDate, plannedEndIso, resolveDayForDate, weekNumber } from "../schedule.js";
+import { DEFAULT_INCREMENT_PCT, blankSet, buildPrefilledSets, equivalentReps, exercisePR, isCompleteSet } from "../progression.js";
+import { App, cssEscape, emptyMesoState, escapeHtml, findLibraryExercise, fmtNum, getExerciseMuscleGroup, icon, pageHeader, plural, renderCurrentView, renderExerciseOptionsGrouped, renderFormError, renderMuscleGroupSelect, renderMuscleTag, renderPrBadge } from "../ui.js";
+import { doMissedDay, getExerciseHistory, getTodayContext, isTouchedSet, refreshPredictions, undoMissedDay } from "../workout.js";
 import { renderLineChart } from "../chart.js";
 
 // Dot colour for a day: green once finished, amber once anything is entered.
@@ -12,10 +12,6 @@ function workoutStatusClass(workout) {
   if (!workout) return "";
   if (workout.finished) return "finished";
   return workout.exercises.some((ex) => ex.sets.some(isTouchedSet)) ? "started" : "";
-}
-
-function plannedEndIso(meso) {
-  return isoDate(addDays(parseLocalDate(meso.startDate), meso.numWeeks * 7 - 1));
 }
 
 // Screen header plus a Monday-to-Sunday strip of the viewed date's week: each
@@ -30,7 +26,7 @@ export function renderDateNav(meso, dateIso, isToday, title) {
     .filter((w) => w.mesocycleId === meso.id)
     .forEach((w) => { workoutsByDate[w.date] = w; });
   // Nothing stops the program at numWeeks, so past the plan it is just "Week n".
-  const week = Math.floor(daysBetween(parseLocalDate(meso.startDate), date) / 7) + 1;
+  const week = weekNumber(meso, date);
   const weekText = dateIso < meso.startDate ? "" : week <= meso.numWeeks ? `Week ${week} of ${meso.numWeeks}` : `Week ${week}`;
   // Short weekday: the line has to fit beside the Today button.
   const subtitle = [formatDay(dateIso), weekText];
@@ -132,11 +128,20 @@ export function renderCalendarCell(c, todayIso, selectedIso) {
   </a>`;
 }
 
-// Short notes above the workout for the two states that would otherwise be
-// silent: the planned weeks are over (the program just keeps going), and a
-// workout kept after the schedule moved under it (see getTodayContext).
-function renderNotices(meso, dayTemplate, workout, dateIso, isToday) {
+// Short notes above the workout for states that would otherwise be silent:
+// the planned weeks are over (the program just keeps going), a workout kept
+// after the schedule moved under it (see getTodayContext), an earlier workout
+// left unfinished, and a missed workout just moved here (with its undo).
+function renderNotices(meso, dayTemplate, workout, dateIso, isToday, madeUp) {
   const notes = [];
+  if (isToday) {
+    const unfinished = Store.getWorkouts()
+      .filter((w) => w.mesocycleId === meso.id && w.date < dateIso && !w.finished && w.exercises.some((ex) => ex.sets.some(isTouchedSet)))
+      .sort((a, b) => (a.date < b.date ? 1 : -1))[0];
+    if (unfinished) {
+      notes.push(`${escapeHtml(unfinished.dayName)} on ${formatDay(unfinished.date)} is not finished. <a href="#/today?date=${unfinished.date}">Open it</a>`);
+    }
+  }
   const plannedEnd = plannedEndIso(meso);
   if (isToday && dateIso > plannedEnd) {
     notes.push(`The ${meso.numWeeks} planned weeks of this mesocycle ended ${formatShortDate(plannedEnd)}. Keep going, or <a href="#/settings">copy it in Settings</a> to start the next one.`);
@@ -144,7 +149,44 @@ function renderNotices(meso, dayTemplate, workout, dateIso, isToday) {
   if (workout && (!dayTemplate || workout.dayId !== dayTemplate.id)) {
     notes.push("The schedule changed after this workout was started. It is kept as it was logged.");
   }
-  return notes.map((note) => `<p class="notice">${note}</p>`).join("");
+  let html = notes.map((note) => `<p class="notice">${note}</p>`).join("");
+  if (madeUp && workout) {
+    const moved = madeUp.shifted ? ` Later workouts moved ${plural(daysBetween(parseLocalDate(madeUp.dateIso), parseLocalDate(dateIso)), "day")}.` : "";
+    html += `<div class="notice notice-action">
+      <span>${escapeHtml(workout.dayName)} from ${formatDay(madeUp.dateIso)} moved here.${moved}</span>
+      <button class="btn small" data-action="undo-missed">Undo</button>
+    </div>`;
+  }
+  return html;
+}
+
+// A training day earlier in the week with nothing logged (findMissedDay):
+// do it on the viewed date, either alone (a makeup on a rest day) or by
+// shifting every later workout along. The checkbox is read when the button
+// is pressed, like the scope radios.
+function renderMissedCard(meso, missed, dateIso, isToday) {
+  if (!missed) return "";
+  const n = daysBetween(parseLocalDate(missed.dateIso), parseLocalDate(dateIso));
+  const forced = !!resolveDayForDate(meso, parseLocalDate(dateIso));
+  return `<div class="card missed-card">
+    <p class="missed-title">Missed: ${escapeHtml(missed.dayTemplate.name)}</p>
+    <p class="muted">${formatDay(missed.dateIso)}</p>
+    <label class="check-row"><input type="checkbox" data-role="missed-shift" ${forced ? "checked disabled" : ""}> Shift mesocycle to fit</label>
+    <p class="muted hint">${forced ? "This day already has a workout, so later workouts must move." : `Later workouts move ${plural(n, "day")}. Unticked, only this workout moves.`}</p>
+    <button class="btn primary wide" data-action="do-missed">${isToday ? "Do it today" : `Do it on ${formatShortDate(dateIso)}`}</button>
+  </div>`;
+}
+
+// Totals for a finished workout: complete sets, volume and PRs.
+function renderSummary(workout, prs) {
+  const sets = workout.exercises.flatMap((ex) => ex.sets.filter(isCompleteSet));
+  const volume = Math.round(sets.reduce((sum, s) => sum + s.weight * s.reps, 0));
+  const prCount = [...prs.values()].filter(Boolean).length;
+  return `<div class="card summary-card">
+    <div><strong>${sets.length}</strong><span class="muted">Sets</span></div>
+    <div><strong>${volume.toLocaleString("en-US")}</strong><span class="muted">Volume (lb)</span></div>
+    <div class="${prCount ? "has-pr" : ""}"><strong>${prCount}</strong><span class="muted">${prCount === 1 ? "PR" : "PRs"}</span></div>
+  </div>`;
 }
 
 // What a future training day will hold, from the day template (nothing is
@@ -165,9 +207,9 @@ function renderPlanPreview(dayTemplate) {
 }
 
 export function renderToday(container) {
-  const { meso, dayTemplate, workout, dateIso, isToday } = getTodayContext();
+  const { meso, dayTemplate, workout, dateIso, isToday, missed, madeUp } = getTodayContext();
   if (!meso) { container.innerHTML = emptyMesoState(); return; }
-  const notices = renderNotices(meso, dayTemplate, workout, dateIso, isToday);
+  const notices = renderNotices(meso, dayTemplate, workout, dateIso, isToday, madeUp) + renderMissedCard(meso, missed, dateIso, isToday);
 
   if (!dayTemplate && !workout) {
     const noDays = meso.days.length === 0;
@@ -194,11 +236,13 @@ export function renderToday(container) {
   const sortedExercises = [...workout.exercises].sort((a, b) => a.order - b.order);
   const historyEx = App.ui.historyOpen ? workout.exercises.find((e) => e.slotId === App.ui.historyOpen) : null;
 
+  const all = workout.finished ? Store.getWorkouts() : null;
+  const prs = new Map(workout.finished ? workout.exercises.map((ex) => [ex.slotId, exercisePR(all, workout, ex)]) : []);
   const exerciseGroups = sortedExercises.map((ex) => getExerciseMuscleGroup(ex.exerciseId, ex.exerciseName));
   const exerciseBlocksHtml = sortedExercises.map((ex, i) => {
     const isGroupStart = i === 0 || exerciseGroups[i] !== exerciseGroups[i - 1];
     const isGroupEnd = i === exerciseGroups.length - 1 || exerciseGroups[i] !== exerciseGroups[i + 1];
-    return renderExerciseBlock(workout, ex, isGroupStart, isGroupEnd, i === 0, i === sortedExercises.length - 1);
+    return renderExerciseBlock(workout, ex, isGroupStart, isGroupEnd, i === 0, i === sortedExercises.length - 1, prs.get(ex.slotId));
   }).join("");
 
   const allSets = workout.exercises.flatMap((ex) => ex.sets);
@@ -215,17 +259,19 @@ export function renderToday(container) {
       </div>
       <div class="progress-track"><div class="progress-fill" style="width:${allSets.length ? (100 * doneSets) / allSets.length : 0}%"></div></div>
     </div>
+    ${workout.finished ? renderSummary(workout, prs) : ""}
     ${exerciseBlocksHtml}
+    ${workout.exercises.length === 0 && !workout.finished ? `<p class="notice">No exercises on this day yet. Add one here, or add them to the day in <a href="#/program">Program</a>.</p>` : ""}
     ${!workout.finished ? `<div class="add-exercise-area">
       ${App.ui.addOpen ? renderAddExerciseForm() : `<button class="btn ghost wide" data-action="open-add-exercise">${icon("plus")} Add exercise</button>`}
     </div>` : ""}
     <div class="finish-area">
-      ${workout.finished
+      ${workout.exercises.length === 0 && !workout.finished ? "" : workout.finished
         ? `<button class="btn secondary wide" data-action="reopen-workout">Reopen workout</button>`
         : App.ui.finishConfirm
           ? `<div class="inline-form">
-              <p class="form-title">${blankSets} of ${allSets.length} sets have no weight and reps</p>
-              <p class="muted">They are saved blank and left out of history.</p>
+              <p class="form-title">${blankSets} of ${plural(allSets.length, "set")} not complete</p>
+              <p class="muted">A set needs both weight and reps. Incomplete sets are left out of history.</p>
               <div class="form-actions">
                 <button class="btn small primary" data-action="confirm-finish">Finish anyway</button>
                 <button class="btn small ghost" data-action="cancel-finish">Keep going</button>
@@ -237,7 +283,7 @@ export function renderToday(container) {
   document.getElementById("overlay-root").innerHTML = historyEx ? renderHistorySheet(historyEx) : "";
 }
 
-export function renderExerciseBlock(workout, ex, isGroupStart, isGroupEnd, isFirst, isLast) {
+export function renderExerciseBlock(workout, ex, isGroupStart, isGroupEnd, isFirst, isLast, pr = null) {
   const removeOpen = App.ui.removeOpen === ex.slotId;
   const subOpen = App.ui.substituteOpen === ex.slotId;
   const menuOpen = App.ui.menuOpen === ex.slotId && !workout.finished;
@@ -247,13 +293,16 @@ export function renderExerciseBlock(workout, ex, isGroupStart, isGroupEnd, isFir
   ].filter(Boolean).join(" ");
   const attrs = `data-slot="${ex.slotId}"`;
   const name = escapeHtml(ex.exerciseName);
+  const lib = findLibraryExercise(ex.exerciseId, ex.exerciseName);
+  const noteOpen = App.ui.noteOpen === ex.slotId && lib;
   return `
     <div class="card exercise ${cardClass}" ${attrs}>
       <div class="exercise-header">
         <div class="ex-name-group">
           ${renderMuscleTag(getExerciseMuscleGroup(ex.exerciseId, ex.exerciseName))}
-          <strong class="ex-name">${name}${complete ? `<span class="ex-done-mark" role="img" aria-label="completed">${icon("check")}</span>` : ""}</strong>
+          <strong class="ex-name">${name}${complete ? `<span class="ex-done-mark" role="img" aria-label="completed">${icon("check")}</span>` : ""}${renderPrBadge(pr)}</strong>
           <span class="rep-range muted">${ex.sets.length} × ${ex.repRangeMin}–${ex.repRangeMax} reps</span>
+          ${lib && lib.note ? `<span class="ex-note">${escapeHtml(lib.note)}</span>` : ""}
         </div>
         <div class="exercise-actions">
           <button class="icon-btn" data-action="open-history" ${attrs} aria-label="History of ${name}">${icon("history")}</button>
@@ -265,8 +314,10 @@ export function renderExerciseBlock(workout, ex, isGroupStart, isGroupEnd, isFir
         <button class="btn small" data-action="open-remove" ${attrs}>${icon("trash")} Remove</button>
         <button class="btn small" data-action="move-up" ${attrs} ${isFirst ? "disabled" : ""}>${icon("up")} Up</button>
         <button class="btn small" data-action="move-down" ${attrs} ${isLast ? "disabled" : ""}>${icon("down")} Down</button>
+        ${lib ? `<button class="btn small" data-action="open-note" ${attrs}>${icon("edit")} Note</button>` : ""}
       </div>` : ""}
       ${removeOpen ? renderRemoveForm(ex) : ""}
+      ${noteOpen ? renderNoteForm(ex, lib) : ""}
       ${subOpen ? renderSubstituteForm(ex) : ""}
       <div class="sets">
         <div class="set-row set-head muted"><span>Set</span><span>Weight (lb)</span><span>Reps</span><span></span></div>
@@ -276,10 +327,10 @@ export function renderExerciseBlock(workout, ex, isGroupStart, isGroupEnd, isFir
           return `
           <div class="set-row ${done ? "done" : ""}">
             <span class="set-num">${i + 1}</span>
-            <input type="number" step="0.5" inputmode="decimal" placeholder="${setWeightHint(s)}"
+            <input type="number" step="0.5" min="0" max="2000" inputmode="decimal" placeholder="${setWeightHint(s)}"
               data-field="weight" ${attrs} data-set="${i}" aria-label="Set ${i + 1} weight"
               value="${fmtNum(s.weight)}" ${locked}>
-            <input type="number" inputmode="numeric" placeholder="${setRepsHint(ex, s)}"
+            <input type="number" step="1" min="0" max="999" inputmode="numeric" placeholder="${setRepsHint(ex, s)}"
               data-field="reps" ${attrs} data-set="${i}" aria-label="Set ${i + 1} reps"
               value="${fmtNum(s.reps)}" ${locked}>
             <input type="checkbox" class="set-check" data-role="set-done"
@@ -374,6 +425,20 @@ export function renderSubstituteForm(ex) {
   </div>`;
 }
 
+// The note lives on the library exercise, so it shows on every workout of it.
+export function renderNoteForm(ex, lib) {
+  const attrs = `data-slot="${ex.slotId}"`;
+  return `<div class="inline-form" ${attrs}>
+    <p class="form-title">Note for ${escapeHtml(lib.name)}</p>
+    <input type="text" data-role="note-text" ${attrs} maxlength="200" value="${escapeHtml(lib.note || "")}" placeholder="e.g. Seat 4, grip just outside the rings" aria-label="Note">
+    <p class="muted hint">Shows on every workout with this exercise. Clear it to remove.</p>
+    <div class="form-actions">
+      <button class="btn small primary" data-action="save-note" ${attrs}>Save</button>
+      <button class="btn small ghost" data-action="cancel-note" ${attrs}>Cancel</button>
+    </div>
+  </div>`;
+}
+
 export function renderAddExerciseForm() {
   return `<div class="inline-form">
     <p class="form-title">Add exercise</p>
@@ -404,15 +469,26 @@ export function renderAddExerciseForm() {
 function closePanels() {
   Object.assign(App.ui, {
     calendarOpen: false, calendarMonth: null, historyOpen: null, menuOpen: null,
-    removeOpen: null, substituteOpen: null, addOpen: false, finishConfirm: false, formError: null,
+    removeOpen: null, substituteOpen: null, noteOpen: null, addOpen: false, finishConfirm: false, formError: null,
   });
 }
 
 const NOTHING_CHOSEN = "Choose an exercise or type a name for a new one.";
 
 export function handleTodayAction(action, btn, view) {
-  const { meso, workout } = getTodayContext();
+  const { meso, workout, dateIso } = getTodayContext();
   if (!meso) return;
+  // These two work on a rest day too, where there is no workout yet.
+  if (action === "do-missed" || action === "undo-missed") {
+    if (action === "undo-missed") undoMissedDay(meso, dateIso);
+    else {
+      const box = view.querySelector('input[data-role="missed-shift"]');
+      doMissedDay(meso, dateIso, isoDate(new Date()), !!(box && box.checked));
+    }
+    closePanels();
+    renderCurrentView();
+    return;
+  }
   if (action === "toggle-calendar") {
     const open = !App.ui.calendarOpen;
     closePanels();
@@ -464,10 +540,19 @@ export function handleTodayAction(action, btn, view) {
   } else if (action === "open-substitute") {
     closePanels();
     App.ui.substituteOpen = slotId;
+  } else if (action === "open-note") {
+    closePanels();
+    App.ui.noteOpen = slotId;
+  } else if (action === "save-note") {
+    const ex = workout.exercises.find((x) => x.slotId === slotId);
+    const lib = ex && findLibraryExercise(ex.exerciseId, ex.exerciseName);
+    const input = view.querySelector(`input[data-role="note-text"][data-slot="${cssEscape(slotId)}"]`);
+    if (lib && input) Store.updateExercise(lib.id, { note: input.value });
+    closePanels();
   } else if (action === "open-add-exercise") {
     closePanels();
     App.ui.addOpen = true;
-  } else if (["cancel-remove", "cancel-substitute", "cancel-add-exercise", "cancel-finish"].includes(action)) {
+  } else if (["cancel-remove", "cancel-substitute", "cancel-note", "cancel-add-exercise", "cancel-finish"].includes(action)) {
     closePanels();
   } else if (action === "confirm-remove") {
     const scope = view.querySelector(`input[name="remove-scope-${cssEscape(slotId)}"]:checked`).value;
@@ -543,7 +628,11 @@ export function handleTodayAction(action, btn, view) {
     const blank = workout.exercises.some((ex) => ex.sets.some((s) => !isCompleteSet(s)));
     closePanels();
     if (blank && action === "finish-workout") App.ui.finishConfirm = true;
-    else Store.finishWorkout(workout.id);
+    else {
+      Store.finishWorkout(workout.id);
+      // Later unfinished workouts were predicted without this one.
+      refreshPredictions();
+    }
   } else if (action === "reopen-workout") {
     // A finished workout shows every complete set as done (isSetDone), even
     // ones never ticked (e.g. finished before the checkbox existed) — persist
@@ -552,6 +641,7 @@ export function handleTodayAction(action, btn, view) {
       if (isCompleteSet(s)) s.done = true;
     }));
     Store.updateWorkout(workout.id, { finished: false, finishedAt: null, exercises: workout.exercises });
+    refreshPredictions();
   }
   renderCurrentView();
   if (action === "open-history") {
@@ -646,9 +736,10 @@ export function handleTodayChange(target) {
   if (!ex) return;
   const set = ex.sets[setIndex];
   const previousWeight = set.weight;
-  const raw = target.value;
-  const num = raw === "" ? null : parseFloat(raw);
-  set[field] = Number.isNaN(num) ? null : num;
+  set[field] = cleanSetValue(field, target.value);
+  // A refused entry (negative, 7.5 reps, absurd) clears from the box, as text
+  // does; a valid one is left as typed so focus and "22.50" stay untouched.
+  if (set[field] == null && target.value !== "") target.value = "";
   set.isLogged = set.weight != null || set.reps != null;
 
   // Once a weight is entered, carry it into any other set of this exercise
