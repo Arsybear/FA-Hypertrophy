@@ -5,7 +5,7 @@ import * as ui from "./ui.js";
 import * as workout from "./workout.js";
 import { Store } from "./store.js";
 import { handleChartPoint } from "./chart.js";
-import { App, currentRoute, registerRoute, renderCurrentView } from "./ui.js";
+import { App, currentRoute, registerRoute, renderCurrentView, showStorageError } from "./ui.js";
 import { handleSetDoneChange, handleTodayAction, handleTodayChange, renderToday } from "./views/today.js";
 import { handleProgramAction, handleProgramChange, renderProgram } from "./views/program.js";
 import { handleHistoryAction, renderHistory } from "./views/history.js";
@@ -17,7 +17,9 @@ window.FAH = { ...store, ...schedule, ...progression, ...ui, ...workout };
 
 export function handleGlobalClick(e) {
   const btn = e.target.closest("[data-action]");
-  if (!btn) return;
+  // An empty data-action is a click shield (the history sheet): it stops the
+  // click from reaching the backdrop's action and does nothing itself.
+  if (!btn || !btn.dataset.action) return;
   const view = document.getElementById("view");
   const route = currentRoute();
   const action = btn.dataset.action;
@@ -32,34 +34,29 @@ export const EXISTING_EXERCISE_SELECT_ROLES =
 export const NEW_EXERCISE_NAME_INPUT_ROLES =
   'input[data-role="add-new-name"], input[data-role="sub-new-name"], input[data-role="new-slot-name"]';
 
-// When an existing exercise is picked from one of the add/swap dropdowns,
-// its muscle group is already fixed — grey out the sibling group select so
-// it can't be edited into a value that doesn't match. Clearing the pick
-// re-enables it. A "locked" group select (swap's create-new field, always
-// pinned to the current slot's group) is left alone either way.
+// A form takes either an existing exercise or a new name, never both.
+// Picking an existing exercise clears the name box and, since its muscle
+// group is already fixed, shows that group greyed out so it can't be edited
+// into one that doesn't match. Clearing the pick re-enables it. The swap
+// form has no group select (a swap stays inside the exercise's group).
 export function handleExercisePickChange(selectEl) {
   const container = selectEl.closest(".inline-form");
   const groupSelect = container.querySelector('select[data-role$="-group"]');
   const nameInput = container.querySelector('input[data-role$="-name"]');
-  if (groupSelect.dataset.locked === "true") return;
   const exercise = selectEl.value ? Store.getExercises().find((e) => e.id === selectEl.value) : null;
-  if (exercise) {
-    groupSelect.value = exercise.muscleGroup || "Other";
-    groupSelect.disabled = true;
-    nameInput.value = "";
-  } else {
-    groupSelect.disabled = false;
-  }
+  if (exercise && nameInput) nameInput.value = "";
+  if (!groupSelect) return;
+  if (exercise) groupSelect.value = exercise.muscleGroup || "Other";
+  groupSelect.disabled = !!exercise;
 }
 
 // Typing a new exercise name means the "pick existing" path no longer
-// applies — reset that dropdown and re-enable the group select (unless it's
-// permanently locked, e.g. the swap form's same-muscle-group constraint).
+// applies — reset that dropdown and re-enable the group select.
 export function handleNewNameTyped(inputEl) {
   if (inputEl.value.trim() === "") return;
   const container = inputEl.closest(".inline-form");
   const groupSelect = container.querySelector('select[data-role$="-group"]');
-  if (groupSelect.dataset.locked !== "true") groupSelect.disabled = false;
+  if (groupSelect) groupSelect.disabled = false;
   const existingSelect = container.querySelector(EXISTING_EXERCISE_SELECT_ROLES);
   if (existingSelect) existingSelect.value = "";
 }
@@ -92,7 +89,14 @@ window.addEventListener("DOMContentLoaded", () => {
   // which container an event came from (it re-derives state from Store and
   // currentRoute() rather than closing over anything from the listener).
   document.getElementById("overlay-root").addEventListener("click", handleGlobalClick);
-  for (const type of ["pointerover", "click"]) document.getElementById("overlay-root").addEventListener(type, handleChartPoint);
+  for (const type of ["pointerover", "pointerout", "click"]) document.getElementById("overlay-root").addEventListener(type, handleChartPoint);
+  // Escape closes the open overlay, through the same action as its button.
+  document.addEventListener("keydown", (e) => {
+    const close = e.key === "Escape" && document.querySelector('#overlay-root button[data-action^="close-"]');
+    if (close) close.click();
+  });
+  Store.onWriteError = showStorageError;
+  Store.normalize();
   if (!location.hash) location.hash = "#/today";
   renderCurrentView();
   if ("serviceWorker" in navigator) {

@@ -112,8 +112,10 @@ never interrupts someone mid-workout on `#/today`.
 
 - `main.js` — entry point: registers the routes, attaches the delegated
   listeners, registers the service worker.
-- `store.js` — `Store` (all `localStorage` access), `validateBackup`.
-- `schedule.js` — dates and weekday-to-day-template resolution.
+- `store.js` — `Store` (all `localStorage` access), `validateBackup`, and
+  the number clamps (`cleanCount`, `cleanPct`, `normalizeMesocycles`).
+- `schedule.js` — dates, weekday-to-day-template resolution, and the one
+  date format shown everywhere (`formatDay`, `formatShortDate`).
 - `progression.js` — double progression and the history matchers.
 - `workout.js` — workout generation, template reconciliation,
   `getTodayContext`, `getExerciseHistory`.
@@ -217,10 +219,14 @@ link, arrows step a week, a "Today" button appears off today) so past days
 can be reopened and backfilled. A calendar button in the header opens `renderCalendarPanel`, a read-only month view (one
 month at a time, `App.ui.calendarMonth`, opening on the viewed date's month)
 with a ‹ › pager and a dot per training day marking
-finished/in-progress/untouched status. It pages from the start month to the
-latest of the planned end (`numWeeks * 7` days), today, the viewed date and
-the last workout — nothing stops the program at `numWeeks`, it keeps
-scheduling, so a range that ended there left later months unreachable. Days
+finished/in-progress/untouched status (amber only once a set is touched:
+just opening a day generates its workout). It pages back to the start month
+and forward without limit — nothing stops the program at `numWeeks`, it
+keeps scheduling, so a pager that ended there left later months
+unreachable. Past the planned weeks the header says "Week n" instead of
+"Week n of N" and today's screen shows a notice pointing to Settings (copy
+the mesocycle to start the next one). A future training day previews its
+plan from the template without generating anything. Days
 before `startDate` are greyed and not links. It only reads
 `Store.getWorkouts()` for that status, never calls `generateWorkout`, so
 just opening the calendar can't create workout instances for days the user
@@ -320,7 +326,8 @@ it carries everywhere. It writes both the data model and those other
 `renderCurrentView()` (see below), and refreshes their reps placeholder
 (`refreshRepsHint`) to the rep estimate at the new weight. Reps are never
 carried. A set that the user has already typed into (`isLogged: true`) is
-left alone.
+left alone. Carried sets stay unlogged, so they keep following later edits
+of the source weight, and clearing it clears them again.
 
 Each set row also has a "done" checkbox (`set.done`, handled by
 `handleSetDoneChange`). Ticking it fills any still-empty box from its
@@ -335,6 +342,14 @@ Workout" persists that (sets `done` on every complete set) so reopened sets
 don't flip to unticked/unlocked. Unlike
 `handleTodayChange`, this handler does call `renderCurrentView()`: the
 no-re-render rule protects focus while typing, and a checkbox tap isn't.
+
+The card header has two buttons: History, and a "more" toggle
+(`App.ui.menuOpen`) that shows Swap / Remove / Up / Down as labelled
+buttons. Only one panel is open at a time (`closePanels`). A form submitted
+with nothing chosen stays open and says why (`App.ui.formError`,
+`renderFormError`); the same goes for `#/program`'s forms. "Finish workout"
+asks first only when some set has no weight and reps (a filled-in but
+unticked set is complete and needs no question).
 
 ### Edit scope: "this workout only" vs "all future"
 
@@ -372,7 +387,11 @@ rather than closing over state captured at render time — `#view`'s
 itself persists, so a naive per-render `addEventListener` would leak stale
 listeners across route changes. Don't reintroduce that pattern; add new
 interactive elements as `data-action="…"` + a case in the relevant
-`handle*Action`/`handle*Change` function instead.
+`handle*Action`/`handle*Change` function instead. An element with an empty
+`data-action=""` is a click shield (the history sheet inside its backdrop):
+`handleGlobalClick` ignores it, so a click inside neither closes the sheet
+nor re-renders it. Escape closes the open overlay by clicking its
+`close-*` button.
 
 Ephemeral UI state (which inline form/history panel is open) lives in the
 module-level `App.ui` object, reset on every `hashchange` but preserved
@@ -394,9 +413,20 @@ on every call; there is no separate app-state layer.
   dates and set numbers are rendered into attributes and text unescaped
   everywhere (the app generates them), so `validateBackup` rejects the whole
   file unless each has the exact shape the app writes. Keep it in step with
-  any new stored field that is rendered unescaped. Import replaces
-  everything after an inline confirm (`App.pendingImport`); the replaced
-  data is kept under `fah_before_import`.
+  any new stored field that is rendered unescaped. Numbers only have to be
+  numbers: an out-of-range one is not a reason to refuse the file (data
+  saved by older versions was not clamped and must still restore) —
+  `normalizeMesocycles` clamps them on import, and `Store.normalize()` does
+  the same once at startup for what is already stored. Import replaces
+  everything after an inline confirm (`App.pendingImport`) and is all or
+  nothing: if storage runs out part-way the old data is put back and
+  `importBackup` returns false. The replaced data is kept under
+  `fah_before_import` when there is room.
+- **Failed writes**: `writeJSON` never throws; it sets `Store.writeFailed`
+  and calls `Store.onWriteError`, which shows a notice at the top of the
+  screen (`showStorageError` in `js/ui.js`, added to the page directly
+  because the failure can come from typing into a set, which must not
+  re-render).
 - **Copy** (`Store.cloneMesocycle`): new ids for the mesocycle, its days and
   slots, inactive, no workouts. Day templates are offsets from the start
   weekday, so the copy starts on the same weekday as the original (first
@@ -406,4 +436,5 @@ on every call; there is no separate app-state layer.
   weight and total volume per session. Not an estimated 1RM, for the same
   reason `nextSet` does not use one. Single series, so no legend; the
   readout shows the latest point or the one hovered/tapped
-  (`handleChartPoint`, delegated on `#overlay-root`).
+  (`handleChartPoint`, delegated on `#overlay-root`; a mouse leaving the
+  chart restores the latest, a lifted finger keeps the tapped one).

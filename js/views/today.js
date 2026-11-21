@@ -1,14 +1,21 @@
-import { Store, uid } from "../store.js";
-import { WEEKDAY_LABELS, addDays, isoDate, jsDateToWeekdayIndex, parseLocalDate, resolveDayForDate } from "../schedule.js";
-import { DEFAULT_INCREMENT_PCT, blankSet, buildPrefilledSets, equivalentReps, isCompleteSet, nextSet } from "../progression.js";
-import { App, cleanCount, cssEscape, emptyMesoState, escapeHtml, fmtNum, getExerciseMuscleGroup, renderCurrentView, renderExerciseOptionsGrouped, renderMuscleGroupSelect, renderMuscleTag, icon, pageHeader } from "../ui.js";
+import { Store, cleanCount, cleanPct, uid } from "../store.js";
+import { WEEKDAY_LABELS, addDays, daysBetween, formatDay, formatShortDate, isoDate, jsDateToWeekdayIndex, parseLocalDate, resolveDayForDate } from "../schedule.js";
+import { DEFAULT_INCREMENT_PCT, blankSet, buildPrefilledSets, equivalentReps, isCompleteSet } from "../progression.js";
+import { App, cssEscape, emptyMesoState, escapeHtml, fmtNum, getExerciseMuscleGroup, icon, pageHeader, renderCurrentView, renderExerciseOptionsGrouped, renderFormError, renderMuscleGroupSelect, renderMuscleTag } from "../ui.js";
 import { getExerciseHistory, getTodayContext, isTouchedSet } from "../workout.js";
 import { renderLineChart } from "../chart.js";
 
-const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
-
+// Dot colour for a day: green once finished, amber once anything is entered.
+// Just opening a day generates its workout, so an untouched one is not "in
+// progress" — it shows the plain training-day dot.
 function workoutStatusClass(workout) {
-  return workout ? (workout.finished ? "finished" : "started") : "";
+  if (!workout) return "";
+  if (workout.finished) return "finished";
+  return workout.exercises.some((ex) => ex.sets.some(isTouchedSet)) ? "started" : "";
+}
+
+function plannedEndIso(meso) {
+  return isoDate(addDays(parseLocalDate(meso.startDate), meso.numWeeks * 7 - 1));
 }
 
 // Screen header plus a Monday-to-Sunday strip of the viewed date's week: each
@@ -22,9 +29,10 @@ export function renderDateNav(meso, dateIso, isToday, title) {
   Store.getWorkouts()
     .filter((w) => w.mesocycleId === meso.id)
     .forEach((w) => { workoutsByDate[w.date] = w; });
-  const week = Math.floor((date - parseLocalDate(meso.startDate)) / (7 * 86400000)) + 1;
-  const subtitle = `${WEEKDAY_LABELS[jsDateToWeekdayIndex(date)]}, ${MONTHS_SHORT[date.getMonth()]} ${date.getDate()}`
-    + (dateIso >= meso.startDate ? ` · Week ${week}` : "");
+  // Nothing stops the program at numWeeks, so past the plan it is just "Week n".
+  const week = Math.floor(daysBetween(parseLocalDate(meso.startDate), date) / 7) + 1;
+  const weekText = dateIso < meso.startDate ? "" : week <= meso.numWeeks ? ` · Week ${week} of ${meso.numWeeks}` : ` · Week ${week}`;
+  const subtitle = `${WEEKDAY_LABELS[jsDateToWeekdayIndex(date)]}, ${formatShortDate(dateIso)}${weekText}`;
 
   const days = Array.from({ length: 7 }, (_, i) => {
     const d = addDays(monday, i);
@@ -37,7 +45,7 @@ export function renderDateNav(meso, dateIso, isToday, title) {
     const inner = `<span class="week-day-name">${WEEKDAY_LABELS[i].slice(0, 2)}</span>
       <span class="week-day-num">${d.getDate()}</span><span class="cal-dot"></span>`;
     return inBlock
-      ? `<a class="${classes}" href="#/today?date=${iso}" aria-label="${WEEKDAY_LABELS[i]} ${iso}">${inner}</a>`
+      ? `<a class="${classes}" href="#/today?date=${iso}" aria-label="${WEEKDAY_LABELS[i]}, ${formatShortDate(iso)}"${iso === dateIso ? ' aria-current="date"' : ""}>${inner}</a>`
       : `<span class="${classes} outside">${inner}</span>`;
   }).join("");
 
@@ -45,7 +53,7 @@ export function renderDateNav(meso, dateIso, isToday, title) {
   const canGoPrev = isoDate(addDays(monday, -1)) >= meso.startDate;
   return `${pageHeader(title, subtitle, `
     ${!isToday ? `<a class="btn small ghost" href="#/today">Today</a>` : ""}
-    <button class="icon-btn ${App.ui.calendarOpen ? "active" : ""}" data-action="toggle-calendar" aria-label="Show training block calendar">${icon("calendar")}</button>`)}
+    <button class="icon-btn ${App.ui.calendarOpen ? "active" : ""}" data-action="toggle-calendar" aria-label="Month calendar" aria-expanded="${!!App.ui.calendarOpen}">${icon("calendar")}</button>`)}
   <div class="week-strip">
     ${canGoPrev
       ? `<a class="icon-btn" href="#/today?date=${prevWeekIso < meso.startDate ? meso.startDate : prevWeekIso}" aria-label="Previous week">${icon("left")}</a>`
@@ -57,10 +65,9 @@ export function renderDateNav(meso, dateIso, isToday, title) {
 }
 
 // Read-only month view of the mesocycle — never generates or mutates workout
-// instances, just reads existing fah_workouts for status. Pages from the
-// start month to the last month that has anything in it: the program keeps
-// scheduling past numWeeks, so the end is the latest of the planned end,
-// today, the viewed date and the last workout.
+// instances, just reads existing fah_workouts for status. It pages back to
+// the start month and forward without limit: the program keeps scheduling
+// past numWeeks, so there is no last month to stop at.
 export function renderCalendarPanel(meso, selectedIso) {
   const todayIso = isoDate(new Date());
   const workoutsByDate = {};
@@ -68,15 +75,9 @@ export function renderCalendarPanel(meso, selectedIso) {
     .filter((w) => w.mesocycleId === meso.id)
     .forEach((w) => { workoutsByDate[w.date] = w; });
 
-  let lastIso = isoDate(addDays(parseLocalDate(meso.startDate), meso.numWeeks * 7 - 1));
-  for (const iso of [todayIso, selectedIso, ...Object.keys(workoutsByDate)]) {
-    if (iso > lastIso) lastIso = iso;
-  }
   const firstMonth = meso.startDate.slice(0, 7);
-  const lastMonth = lastIso.slice(0, 7);
   let month = App.ui.calendarMonth || selectedIso.slice(0, 7);
   if (month < firstMonth) month = firstMonth;
-  if (month > lastMonth) month = lastMonth;
 
   const [year, monthNum] = month.split("-").map(Number);
   const first = new Date(year, monthNum - 1, 1);
@@ -90,8 +91,7 @@ export function renderCalendarPanel(meso, selectedIso) {
   }
   const monthNavBtn = (label, target, name) => {
     const iso = isoDate(target).slice(0, 7);
-    const off = iso < firstMonth || iso > lastMonth;
-    return `<button class="icon-btn" data-action="calendar-month" data-month="${iso}" aria-label="${name} month" ${off ? "disabled" : ""}>${icon(label)}</button>`;
+    return `<button class="icon-btn" data-action="calendar-month" data-month="${iso}" aria-label="${name} month" ${iso < firstMonth ? "disabled" : ""}>${icon(label)}</button>`;
   };
 
   return `<div class="calendar-panel">
@@ -124,22 +124,57 @@ export function renderCalendarCell(c, todayIso, selectedIso) {
     dateIso === selectedIso ? "selected" : "",
     workoutStatusClass(workout),
   ].filter(Boolean).join(" ");
-  return `<a class="${classes}" href="#/today?date=${dateIso}" title="${escapeHtml(workout ? workout.dayName : dayTemplate ? dayTemplate.name : "Rest day")} — ${dateIso}">
+  const what = workout ? workout.dayName : dayTemplate ? dayTemplate.name : "Rest day";
+  return `<a class="${classes}" href="#/today?date=${dateIso}" aria-label="${escapeHtml(what)}, ${formatShortDate(dateIso)}">
     <span class="cal-daynum">${date.getDate()}</span>
     ${!isRest ? `<span class="cal-dot"></span>` : ""}
   </a>`;
 }
 
+// Short notes above the workout for the two states that would otherwise be
+// silent: the planned weeks are over (the program just keeps going), and a
+// workout kept after the schedule moved under it (see getTodayContext).
+function renderNotices(meso, dayTemplate, workout, dateIso, isToday) {
+  const notes = [];
+  const plannedEnd = plannedEndIso(meso);
+  if (isToday && dateIso > plannedEnd) {
+    notes.push(`The ${meso.numWeeks} planned weeks of this mesocycle ended ${formatShortDate(plannedEnd)}. Keep going, or <a href="#/settings">copy it in Settings</a> to start the next one.`);
+  }
+  if (workout && (!dayTemplate || workout.dayId !== dayTemplate.id)) {
+    notes.push("The schedule changed after this workout was started. It is kept as it was logged.");
+  }
+  return notes.map((note) => `<p class="notice">${note}</p>`).join("");
+}
+
+// What a future training day will hold, from the day template (nothing is
+// generated until the day arrives).
+function renderPlanPreview(dayTemplate) {
+  const slots = [...dayTemplate.exercises].sort((a, b) => a.order - b.order);
+  if (slots.length === 0) return "";
+  const library = Store.getExercises();
+  return `<div class="card">
+    ${slots.map((slot) => {
+      const exercise = library.find((e) => e.id === slot.exerciseId);
+      return `<div class="preview-row">
+        <span class="slot-name">${renderMuscleTag((exercise && exercise.muscleGroup) || "Other")}<span>${escapeHtml(exercise ? exercise.name : "(unknown exercise)")}</span></span>
+        <span class="muted">${slot.targetSets} × ${slot.repRangeMin}–${slot.repRangeMax}</span>
+      </div>`;
+    }).join("")}
+  </div>`;
+}
+
 export function renderToday(container) {
   const { meso, dayTemplate, workout, dateIso, isToday } = getTodayContext();
   if (!meso) { container.innerHTML = emptyMesoState(); return; }
+  const notices = renderNotices(meso, dayTemplate, workout, dateIso, isToday);
 
   if (!dayTemplate && !workout) {
     container.innerHTML = `
       ${renderDateNav(meso, dateIso, isToday, "Rest day")}
+      ${notices}
       <div class="empty-state">
         <h2>Nothing scheduled</h2>
-        <p class="muted">${dateIso < meso.startDate ? "This is before the mesocycle starts." : "Recover. Next session is on the strip above."}</p>
+        <p class="muted">${dateIso < meso.startDate ? "This is before the mesocycle starts." : "Rest and recover."}</p>
       </div>`;
     return;
   }
@@ -147,31 +182,32 @@ export function renderToday(container) {
   if (!workout) {
     container.innerHTML = `
       ${renderDateNav(meso, dateIso, isToday, dayTemplate.name)}
-      <div class="empty-state">
-        <h2>Not reached yet</h2>
-        <p class="muted">This workout opens on its day.</p>
-      </div>`;
+      ${notices}
+      <p class="section-label">Planned · opens on its day</p>
+      ${renderPlanPreview(dayTemplate) || `<div class="empty-state"><p class="muted">No exercises in this day yet.</p></div>`}`;
     return;
   }
 
   const sortedExercises = [...workout.exercises].sort((a, b) => a.order - b.order);
   const historyEx = App.ui.historyOpen ? workout.exercises.find((e) => e.slotId === App.ui.historyOpen) : null;
 
-  const exerciseGroups = sortedExercises.map((ex) => getExerciseMuscleGroup(ex.exerciseId));
+  const exerciseGroups = sortedExercises.map((ex) => getExerciseMuscleGroup(ex.exerciseId, ex.exerciseName));
   const exerciseBlocksHtml = sortedExercises.map((ex, i) => {
     const isGroupStart = i === 0 || exerciseGroups[i] !== exerciseGroups[i - 1];
     const isGroupEnd = i === exerciseGroups.length - 1 || exerciseGroups[i] !== exerciseGroups[i + 1];
-    return renderExerciseBlock(workout, ex, isGroupStart, isGroupEnd);
+    return renderExerciseBlock(workout, ex, isGroupStart, isGroupEnd, i === 0, i === sortedExercises.length - 1);
   }).join("");
 
   const allSets = workout.exercises.flatMap((ex) => ex.sets);
   const doneSets = allSets.filter((s) => isSetDone(workout, s)).length;
+  const blankSets = allSets.filter((s) => !isCompleteSet(s)).length;
 
   container.innerHTML = `
     ${renderDateNav(meso, dateIso, isToday, workout.dayName)}
+    ${notices}
     <div class="progress-card ${workout.finished ? "finished" : ""}">
       <div class="progress-text">
-        <span class="progress-count" data-role="sets-done"><strong>${doneSets}</strong> / ${allSets.length} sets</span>
+        <span class="progress-count"><strong>${doneSets}</strong> / ${allSets.length} sets</span>
         <span class="status-pill">${workout.finished ? "Finished" : doneSets > 0 ? "In progress" : "Not started"}</span>
       </div>
       <div class="progress-track"><div class="progress-fill" style="width:${allSets.length ? (100 * doneSets) / allSets.length : 0}%"></div></div>
@@ -183,38 +219,50 @@ export function renderToday(container) {
     <div class="finish-area">
       ${workout.finished
         ? `<button class="btn secondary wide" data-action="reopen-workout">Reopen workout</button>`
-        : `<button class="btn primary wide" data-action="finish-workout">Finish workout</button>`}
+        : App.ui.finishConfirm
+          ? `<div class="inline-form">
+              <p class="form-title">${blankSets} of ${allSets.length} sets have no weight and reps</p>
+              <p class="muted">They are saved blank and left out of history.</p>
+              <div class="form-actions">
+                <button class="btn small primary" data-action="confirm-finish">Finish anyway</button>
+                <button class="btn small ghost" data-action="cancel-finish">Keep going</button>
+              </div>
+            </div>`
+          : `<button class="btn primary wide" data-action="finish-workout">Finish workout</button>`}
     </div>
   `;
   document.getElementById("overlay-root").innerHTML = historyEx ? renderHistorySheet(historyEx) : "";
 }
 
-export function renderExerciseBlock(workout, ex, isGroupStart, isGroupEnd) {
+export function renderExerciseBlock(workout, ex, isGroupStart, isGroupEnd, isFirst, isLast) {
   const removeOpen = App.ui.removeOpen === ex.slotId;
   const subOpen = App.ui.substituteOpen === ex.slotId;
+  const menuOpen = App.ui.menuOpen === ex.slotId && !workout.finished;
   const complete = ex.sets.length > 0 && ex.sets.every((s) => isSetDone(workout, s));
   const cardClass = [
     !isGroupStart ? "merge-top" : "", !isGroupEnd ? "merge-bottom" : "", complete ? "complete" : "",
   ].filter(Boolean).join(" ");
-  const off = workout.finished ? "disabled" : "";
+  const attrs = `data-slot="${ex.slotId}"`;
+  const name = escapeHtml(ex.exerciseName);
   return `
-    <div class="card exercise ${cardClass}" data-slot="${ex.slotId}">
+    <div class="card exercise ${cardClass}" ${attrs}>
       <div class="exercise-header">
         <div class="ex-name-group">
-          ${renderMuscleTag(getExerciseMuscleGroup(ex.exerciseId))}
-          <strong class="ex-name">${escapeHtml(ex.exerciseName)}${complete ? `<span class="ex-done-mark" aria-label="completed">${icon("check")}</span>` : ""}</strong>
+          ${renderMuscleTag(getExerciseMuscleGroup(ex.exerciseId, ex.exerciseName))}
+          <strong class="ex-name">${name}${complete ? `<span class="ex-done-mark" role="img" aria-label="completed">${icon("check")}</span>` : ""}</strong>
           <span class="rep-range muted">${ex.sets.length} × ${ex.repRangeMin}–${ex.repRangeMax} reps</span>
         </div>
         <div class="exercise-actions">
-          <button class="icon-btn" data-action="open-history" data-slot="${ex.slotId}" aria-label="History">${icon("history")}</button>
-          ${!workout.finished ? `
-            <button class="icon-btn" data-action="open-substitute" data-slot="${ex.slotId}" aria-label="Swap exercise">${icon("swap")}</button>
-            <button class="icon-btn" data-action="open-remove" data-slot="${ex.slotId}" aria-label="Remove exercise">${icon("trash")}</button>
-            <button class="icon-btn" data-action="move-up" data-slot="${ex.slotId}" aria-label="Move up" ${off}>${icon("up")}</button>
-            <button class="icon-btn" data-action="move-down" data-slot="${ex.slotId}" aria-label="Move down" ${off}>${icon("down")}</button>
-          ` : ""}
+          <button class="icon-btn" data-action="open-history" ${attrs} aria-label="History of ${name}">${icon("history")}</button>
+          ${!workout.finished ? `<button class="icon-btn ${menuOpen ? "active" : ""}" data-action="toggle-menu" ${attrs} aria-label="More actions for ${name}" aria-expanded="${menuOpen}">${icon("more")}</button>` : ""}
         </div>
       </div>
+      ${menuOpen ? `<div class="exercise-menu">
+        <button class="btn small" data-action="open-substitute" ${attrs}>${icon("swap")} Swap</button>
+        <button class="btn small" data-action="open-remove" ${attrs}>${icon("trash")} Remove</button>
+        <button class="btn small" data-action="move-up" ${attrs} ${isFirst ? "disabled" : ""}>${icon("up")} Up</button>
+        <button class="btn small" data-action="move-down" ${attrs} ${isLast ? "disabled" : ""}>${icon("down")} Down</button>
+      </div>` : ""}
       ${removeOpen ? renderRemoveForm(ex) : ""}
       ${subOpen ? renderSubstituteForm(ex) : ""}
       <div class="sets">
@@ -226,13 +274,13 @@ export function renderExerciseBlock(workout, ex, isGroupStart, isGroupEnd) {
           <div class="set-row ${done ? "done" : ""}">
             <span class="set-num">${i + 1}</span>
             <input type="number" step="0.5" inputmode="decimal" placeholder="${setWeightHint(s)}"
-              data-field="weight" data-slot="${ex.slotId}" data-set="${i}" aria-label="Set ${i + 1} weight"
+              data-field="weight" ${attrs} data-set="${i}" aria-label="Set ${i + 1} weight"
               value="${fmtNum(s.weight)}" ${locked}>
             <input type="number" inputmode="numeric" placeholder="${setRepsHint(ex, s)}"
-              data-field="reps" data-slot="${ex.slotId}" data-set="${i}" aria-label="Set ${i + 1} reps"
+              data-field="reps" ${attrs} data-set="${i}" aria-label="Set ${i + 1} reps"
               value="${fmtNum(s.reps)}" ${locked}>
             <input type="checkbox" class="set-check" data-role="set-done"
-              data-slot="${ex.slotId}" data-set="${i}" aria-label="Set ${i + 1} done"
+              ${attrs} data-set="${i}" aria-label="Set ${i + 1} done"
               ${done ? "checked" : ""} ${workout.finished ? "disabled" : ""}>
           </div>`;
         }).join("")}
@@ -249,7 +297,7 @@ export function renderExerciseBlock(workout, ex, isGroupStart, isGroupEnd) {
 // (see pctPerRep in progression.js). Needs at least two sessions.
 function renderProgressCharts(rows) {
   const sessions = rows
-    .map((r) => ({ label: r.date.slice(5).replace("-", "/"), sets: r.sets.filter(isCompleteSet) }))
+    .map((r) => ({ label: formatShortDate(r.date), sets: r.sets.filter(isCompleteSet) }))
     .filter((r) => r.sets.length > 0)
     .reverse();
   if (sessions.length < 2) return "";
@@ -259,13 +307,16 @@ function renderProgressCharts(rows) {
   </div>`;
 }
 
+// data-action="" on the sheet itself is a click shield: a click inside the
+// sheet resolves to it (not to the backdrop's close-history behind it), and
+// handleGlobalClick ignores an empty action.
 export function renderHistorySheet(ex) {
   const rows = getExerciseHistory(ex.slotId, ex.exerciseId, ex.exerciseName);
   return `<div class="history-sheet-backdrop" data-action="close-history">
-    <div class="history-sheet" data-action="">
+    <div class="history-sheet" data-action="" role="dialog" aria-modal="true" aria-label="${escapeHtml(ex.exerciseName)} history">
       <div class="history-sheet-header">
         <div>
-          ${renderMuscleTag(getExerciseMuscleGroup(ex.exerciseId))}
+          ${renderMuscleTag(getExerciseMuscleGroup(ex.exerciseId, ex.exerciseName))}
           <h2>${escapeHtml(ex.exerciseName)}</h2>
         </div>
         <button class="icon-btn" data-action="close-history" aria-label="Close">${icon("close")}</button>
@@ -274,7 +325,7 @@ export function renderHistorySheet(ex) {
       ${rows.length === 0
         ? `<p class="muted">No history yet.</p>`
         : rows.map((r) => `<div class="history-row">
-            <span class="muted">${r.date} · ${escapeHtml(r.dayName)}</span>
+            <span class="muted">${formatDay(r.date)} · ${escapeHtml(r.dayName)}</span>
             <span class="set-chips">${r.sets.map((s) => isCompleteSet(s) ? `<span class="set-chip">${s.weight}×${s.reps}</span>` : `<span class="set-chip empty">—</span>`).join("")}</span>
           </div>`).join("")}
     </div>
@@ -283,7 +334,7 @@ export function renderHistorySheet(ex) {
 
 export function renderRemoveForm(ex) {
   return `<div class="inline-form" data-slot="${ex.slotId}">
-    <p>Remove ${escapeHtml(ex.exerciseName)}?</p>
+    <p class="form-title">Remove ${escapeHtml(ex.exerciseName)}?</p>
     <label><input type="radio" name="remove-scope-${ex.slotId}" value="workout" checked> This workout only</label>
     <label><input type="radio" name="remove-scope-${ex.slotId}" value="future"> All future workouts of this day</label>
     <div class="form-actions">
@@ -293,22 +344,29 @@ export function renderRemoveForm(ex) {
   </div>`;
 }
 
+// A swap stays inside the exercise's muscle group (so the day keeps its
+// shape): pick one of that group's other exercises or name a new one, which
+// is created in the same group.
 export function renderSubstituteForm(ex) {
-  const currentGroup = getExerciseMuscleGroup(ex.exerciseId);
-  return `<div class="inline-form" data-slot="${ex.slotId}">
-    <p>Swap ${escapeHtml(ex.exerciseName)} for another ${escapeHtml(currentGroup)} exercise:</p>
+  const group = getExerciseMuscleGroup(ex.exerciseId, ex.exerciseName);
+  const options = renderExerciseOptionsGrouped(ex.exerciseId, group).trim();
+  const attrs = `data-slot="${ex.slotId}"`;
+  return `<div class="inline-form" ${attrs}>
+    <p class="form-title">Swap ${escapeHtml(ex.exerciseName)} for another ${escapeHtml(group)} exercise</p>
     ${ex.sets.some(isTouchedSet) ? `<p class="warn-text">Sets already entered for ${escapeHtml(ex.exerciseName)} will be cleared.</p>` : ""}
-    <select data-role="sub-exercise-select" data-slot="${ex.slotId}">
-      <option value="">-- choose existing --</option>
-      ${renderExerciseOptionsGrouped(ex.exerciseId, currentGroup)}
-    </select>
-    <input type="text" data-role="sub-new-name" data-slot="${ex.slotId}" placeholder="or create new exercise">
-    ${renderMuscleGroupSelect("sub-new-group", `data-slot="${ex.slotId}"`, currentGroup)}
+    ${renderFormError()}
+    ${options
+      ? `<select data-role="sub-exercise-select" ${attrs} aria-label="Existing ${escapeHtml(group)} exercise">
+          <option value="">Choose an exercise</option>
+          ${options}
+        </select>`
+      : `<p class="muted">No other ${escapeHtml(group)} exercises yet. Name a new one:</p>`}
+    <input type="text" data-role="sub-new-name" ${attrs} placeholder="${options ? "or name a new exercise" : "New exercise name"}" aria-label="New exercise name">
     <label><input type="radio" name="sub-scope-${ex.slotId}" value="workout" checked> This workout only</label>
     <label><input type="radio" name="sub-scope-${ex.slotId}" value="future"> All future workouts of this day</label>
     <div class="form-actions">
-      <button class="btn small primary" data-action="confirm-substitute" data-slot="${ex.slotId}">Swap</button>
-      <button class="btn small ghost" data-action="cancel-substitute" data-slot="${ex.slotId}">Cancel</button>
+      <button class="btn small primary" data-action="confirm-substitute" ${attrs}>Swap</button>
+      <button class="btn small ghost" data-action="cancel-substitute" ${attrs}>Cancel</button>
     </div>
   </div>`;
 }
@@ -316,17 +374,18 @@ export function renderSubstituteForm(ex) {
 export function renderAddExerciseForm() {
   return `<div class="inline-form">
     <p class="form-title">Add exercise</p>
-    <select data-role="add-exercise-select">
-      <option value="">-- choose existing --</option>
+    ${renderFormError()}
+    <select data-role="add-exercise-select" aria-label="Existing exercise">
+      <option value="">Choose an exercise</option>
       ${renderExerciseOptionsGrouped(null)}
     </select>
-    <input type="text" data-role="add-new-name" placeholder="or create new exercise">
+    <input type="text" data-role="add-new-name" placeholder="or name a new exercise" aria-label="New exercise name">
     ${renderMuscleGroupSelect("add-new-group")}
     <div class="form-row">
-      <label>Sets <input type="number" data-role="add-sets" value="2" min="1"></label>
-      <label>Rep min <input type="number" data-role="add-rep-min" value="5" min="1"></label>
-      <label>Rep max <input type="number" data-role="add-rep-max" value="10" min="1"></label>
-      <label>+% <input type="number" step="0.5" data-role="add-increment" value="${DEFAULT_INCREMENT_PCT}"></label>
+      <label>Sets <input type="number" inputmode="numeric" data-role="add-sets" value="2" min="1"></label>
+      <label>Rep min <input type="number" inputmode="numeric" data-role="add-rep-min" value="5" min="1"></label>
+      <label>Rep max <input type="number" inputmode="numeric" data-role="add-rep-max" value="10" min="1"></label>
+      <label>+ % <input type="number" inputmode="decimal" step="0.5" data-role="add-increment" value="${DEFAULT_INCREMENT_PCT}"></label>
     </div>
     <label><input type="radio" name="add-scope" value="workout" checked> This workout only</label>
     <label><input type="radio" name="add-scope" value="future"> All future workouts of this day</label>
@@ -337,13 +396,24 @@ export function renderAddExerciseForm() {
   </div>`;
 }
 
+// Only one panel is open at a time: the calendar, the history sheet, one
+// exercise's menu or form, the add form, or the finish confirmation.
+function closePanels() {
+  Object.assign(App.ui, {
+    calendarOpen: false, calendarMonth: null, historyOpen: null, menuOpen: null,
+    removeOpen: null, substituteOpen: null, addOpen: false, finishConfirm: false, formError: null,
+  });
+}
+
+const NOTHING_CHOSEN = "Choose an exercise or type a name for a new one.";
+
 export function handleTodayAction(action, btn, view) {
   const { meso, workout } = getTodayContext();
   if (!meso) return;
   if (action === "toggle-calendar") {
-    App.ui.calendarOpen = !App.ui.calendarOpen;
-    App.ui.calendarMonth = null;
-    App.ui.removeOpen = null; App.ui.substituteOpen = null; App.ui.addOpen = false; App.ui.historyOpen = null;
+    const open = !App.ui.calendarOpen;
+    closePanels();
+    App.ui.calendarOpen = open;
     renderCurrentView();
     return;
   }
@@ -353,8 +423,12 @@ export function handleTodayAction(action, btn, view) {
     return;
   }
   if (action === "close-history") {
-    App.ui.historyOpen = null;
+    const slot = App.ui.historyOpen;
+    closePanels();
     renderCurrentView();
+    // Focus goes back to the button that opened the sheet.
+    const opener = slot && document.querySelector(`[data-action="open-history"][data-slot="${cssEscape(slot)}"]`);
+    if (opener) opener.focus();
     return;
   }
   if (!workout) return;
@@ -374,12 +448,24 @@ export function handleTodayAction(action, btn, view) {
       [sorted[idx].order, sorted[swapIdx].order] = [sorted[swapIdx].order, sorted[idx].order];
       Store.updateWorkout(workout.id, { exercises: workout.exercises });
     }
+  } else if (action === "toggle-menu") {
+    const open = App.ui.menuOpen !== slotId;
+    closePanels();
+    App.ui.menuOpen = open ? slotId : null;
   } else if (action === "open-history") {
-    App.ui.historyOpen = slotId; App.ui.removeOpen = null; App.ui.substituteOpen = null; App.ui.addOpen = false; App.ui.calendarOpen = false;
+    closePanels();
+    App.ui.historyOpen = slotId;
   } else if (action === "open-remove") {
-    App.ui.removeOpen = slotId; App.ui.substituteOpen = null; App.ui.addOpen = false; App.ui.calendarOpen = false; App.ui.historyOpen = null;
-  } else if (action === "cancel-remove") {
-    App.ui.removeOpen = null;
+    closePanels();
+    App.ui.removeOpen = slotId;
+  } else if (action === "open-substitute") {
+    closePanels();
+    App.ui.substituteOpen = slotId;
+  } else if (action === "open-add-exercise") {
+    closePanels();
+    App.ui.addOpen = true;
+  } else if (["cancel-remove", "cancel-substitute", "cancel-add-exercise", "cancel-finish"].includes(action)) {
+    closePanels();
   } else if (action === "confirm-remove") {
     const scope = view.querySelector(`input[name="remove-scope-${cssEscape(slotId)}"]:checked`).value;
     if (scope === "future") {
@@ -390,19 +476,18 @@ export function handleTodayAction(action, btn, view) {
     }
     workout.exercises = workout.exercises.filter((x) => x.slotId !== slotId);
     Store.updateWorkout(workout.id, { exercises: workout.exercises, skippedSlotIds: workout.skippedSlotIds });
-    App.ui.removeOpen = null;
-  } else if (action === "open-substitute") {
-    App.ui.substituteOpen = slotId; App.ui.removeOpen = null; App.ui.addOpen = false; App.ui.calendarOpen = false; App.ui.historyOpen = null;
-  } else if (action === "cancel-substitute") {
-    App.ui.substituteOpen = null;
+    closePanels();
   } else if (action === "confirm-substitute") {
+    const ex = workout.exercises.find((x) => x.slotId === slotId);
     const select = view.querySelector(`select[data-role="sub-exercise-select"][data-slot="${cssEscape(slotId)}"]`);
     const newName = view.querySelector(`input[data-role="sub-new-name"][data-slot="${cssEscape(slotId)}"]`).value.trim();
-    const newGroup = view.querySelector(`select[data-role="sub-new-group"][data-slot="${cssEscape(slotId)}"]`).value;
     const scope = view.querySelector(`input[name="sub-scope-${cssEscape(slotId)}"]:checked`).value;
-    const exercise = newName ? Store.addExercise(newName, newGroup) : Store.getExercises().find((x) => x.id === select.value);
-    if (exercise) {
-      const ex = workout.exercises.find((x) => x.slotId === slotId);
+    const exercise = newName
+      ? Store.addExercise(newName, getExerciseMuscleGroup(ex.exerciseId, ex.exerciseName))
+      : Store.getExercises().find((x) => select && x.id === select.value);
+    if (!exercise) {
+      App.ui.formError = NOTHING_CHOSEN;
+    } else {
       ex.exerciseId = exercise.id;
       ex.exerciseName = exercise.name;
       // Sets belong to the exercise: anything already entered was the old
@@ -417,12 +502,8 @@ export function handleTodayAction(action, btn, view) {
       });
       if (scope === "future") Store.updateExerciseSlot(meso.id, workout.dayId, slotId, { exerciseId: exercise.id });
       Store.updateWorkout(workout.id, { exercises: workout.exercises });
+      closePanels();
     }
-    App.ui.substituteOpen = null;
-  } else if (action === "open-add-exercise") {
-    App.ui.addOpen = true; App.ui.removeOpen = null; App.ui.substituteOpen = null; App.ui.calendarOpen = false; App.ui.historyOpen = null;
-  } else if (action === "cancel-add-exercise") {
-    App.ui.addOpen = false;
   } else if (action === "confirm-add-exercise") {
     const select = view.querySelector('select[data-role="add-exercise-select"]');
     const newName = view.querySelector('input[data-role="add-new-name"]').value.trim();
@@ -430,10 +511,12 @@ export function handleTodayAction(action, btn, view) {
     const targetSets = cleanCount(view.querySelector('input[data-role="add-sets"]').value);
     const repRangeMin = cleanCount(view.querySelector('input[data-role="add-rep-min"]').value);
     const repRangeMax = Math.max(repRangeMin, cleanCount(view.querySelector('input[data-role="add-rep-max"]').value));
-    const weightIncrementPct = Math.max(0, Number(view.querySelector('input[data-role="add-increment"]').value) || 0);
+    const weightIncrementPct = cleanPct(view.querySelector('input[data-role="add-increment"]').value);
     const scope = view.querySelector('input[name="add-scope"]:checked').value;
     const exercise = newName ? Store.addExercise(newName, newGroup) : Store.getExercises().find((x) => x.id === select.value);
-    if (exercise) {
+    if (!exercise) {
+      App.ui.formError = NOTHING_CHOSEN;
+    } else {
       // slot is null when the workout's day is no longer in the program
       // (see getTodayContext) — the add then stays on this workout only.
       const slot = scope === "future"
@@ -448,10 +531,16 @@ export function handleTodayAction(action, btn, view) {
         ...(slot ? {} : { oneOff: true }),
       });
       Store.updateWorkout(workout.id, { exercises: workout.exercises });
+      closePanels();
     }
-    App.ui.addOpen = false;
-  } else if (action === "finish-workout") {
-    Store.finishWorkout(workout.id);
+  } else if (action === "finish-workout" || action === "confirm-finish") {
+    // A set without weight and reps is saved blank and skipped by history
+    // and predictions, so finishing with some left asks first. A set that is
+    // filled in but not ticked is complete and needs no question.
+    const blank = workout.exercises.some((ex) => ex.sets.some((s) => !isCompleteSet(s)));
+    closePanels();
+    if (blank && action === "finish-workout") App.ui.finishConfirm = true;
+    else Store.finishWorkout(workout.id);
   } else if (action === "reopen-workout") {
     // A finished workout shows every complete set as done (isSetDone), even
     // ones never ticked (e.g. finished before the checkbox existed) — persist
@@ -462,6 +551,10 @@ export function handleTodayAction(action, btn, view) {
     Store.updateWorkout(workout.id, { finished: false, finishedAt: null, exercises: workout.exercises });
   }
   renderCurrentView();
+  if (action === "open-history") {
+    const close = document.querySelector("#overlay-root .history-sheet .icon-btn");
+    if (close) close.focus();
+  }
 }
 
 // Placeholder text for a set's inputs: the double-progression prediction
@@ -526,6 +619,7 @@ export function handleSetDoneChange(target) {
   } else {
     set.done = false;
   }
+  App.ui.finishConfirm = false;
   Store.updateWorkout(workout.id, { exercises: workout.exercises });
   renderCurrentView();
 }
@@ -548,6 +642,7 @@ export function handleTodayChange(target) {
   const ex = workout.exercises.find((e) => e.slotId === slotId);
   if (!ex) return;
   const set = ex.sets[setIndex];
+  const previousWeight = set.weight;
   const raw = target.value;
   const num = raw === "" ? null : parseFloat(raw);
   set[field] = Number.isNaN(num) ? null : num;
@@ -560,19 +655,21 @@ export function handleTodayChange(target) {
   // different weights (e.g. last week's drop set), those should stick. With
   // no prediction at all (baseline entry), every baseWeight is null, so the
   // weight carries everywhere. Carried sets stay unlogged, so their weight
-  // keeps following later edits; reps are never carried, only re-hinted.
-  if (field === "weight" && set.weight != null) {
+  // keeps following later edits — including being cleared again when this
+  // weight is cleared; reps are never carried, only re-hinted.
+  if (field === "weight") {
     ex.sets.forEach((s, i) => {
-      if (i === setIndex || s.isLogged || s.baseWeight !== set.baseWeight) return;
+      if (i === setIndex || s.isLogged || s.done || s.baseWeight !== set.baseWeight) return;
+      if (set.weight == null && s.weight !== previousWeight) return;
       s.weight = set.weight;
       const otherInput = document.querySelector(
         `input[data-field="weight"][data-slot="${cssEscape(slotId)}"][data-set="${i}"]`
       );
-      if (otherInput) otherInput.value = set.weight;
+      if (otherInput) otherInput.value = fmtNum(set.weight);
       refreshRepsHint(ex, i);
     });
+    refreshRepsHint(ex, setIndex);
   }
-  if (field === "weight") refreshRepsHint(ex, setIndex);
 
   Store.updateWorkout(workout.id, { exercises: workout.exercises });
   // No renderCurrentView() here: a full re-render would replace the input

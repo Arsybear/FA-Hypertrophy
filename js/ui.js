@@ -25,10 +25,9 @@ export function escapeHtml(str) {
   })[c]);
 }
 
-// Sets / reps / weeks typed into a form: a whole number from 1 to 99 (an
-// absurd set count would build that many set rows and overflow storage).
-export function cleanCount(v) {
-  return Math.min(99, Math.max(1, Math.floor(Number(v)) || 1));
+// "1 exercise", "2 exercises".
+export function plural(n, word) {
+  return `${n} ${word}${n === 1 ? "" : "s"}`;
 }
 
 export function fmtNum(n) {
@@ -39,15 +38,20 @@ export function cssEscape(s) {
   return String(s).replace(/[^a-zA-Z0-9_-]/g, (c) => `\\${c}`);
 }
 
-export function getExerciseMuscleGroup(exerciseId) {
-  const exercise = Store.getExercises().find((e) => e.id === exerciseId);
+// Workout entries from before exercises had ids carry only the name, so the
+// name is the fallback (library names are unique, ignoring case).
+export function getExerciseMuscleGroup(exerciseId, exerciseName) {
+  const library = Store.getExercises();
+  const name = exerciseName ? exerciseName.toLowerCase() : null;
+  const exercise = library.find((e) => e.id === exerciseId)
+    || (name && library.find((e) => e.name.toLowerCase() === name));
   return (exercise && exercise.muscleGroup) || "Other";
 }
 
 export function renderExerciseOptionsGrouped(excludeId, onlyGroup) {
   let library = Store.getExercises().filter((e) => e.id !== excludeId);
   if (onlyGroup) library = library.filter((e) => (e.muscleGroup || "Other") === onlyGroup);
-  const byGroup = {};
+  const byGroup = Object.create(null); // a group name can be anything, even "__proto__"
   for (const ex of library) {
     const group = ex.muscleGroup || "Other";
     (byGroup[group] = byGroup[group] || []).push(ex);
@@ -59,7 +63,7 @@ export function renderExerciseOptionsGrouped(excludeId, onlyGroup) {
 }
 
 export function renderMuscleGroupSelect(dataRole, dataAttrs = "", lockedValue = null) {
-  return `<select data-role="${dataRole}" ${dataAttrs} ${lockedValue ? 'disabled data-locked="true"' : ""}>
+  return `<select data-role="${dataRole}" ${dataAttrs} aria-label="Muscle group" ${lockedValue ? 'disabled data-locked="true"' : ""}>
     ${MUSCLE_GROUPS.map((g) => `<option value="${g}" ${g === lockedValue ? "selected" : ""}>${g}</option>`).join("")}
   </select>`;
 }
@@ -75,6 +79,12 @@ export function emptyMesoState() {
     <p class="muted">Create a training block to start logging.</p>
     <a href="#/settings" class="btn primary">Create one in Settings</a>
   </div>`;
+}
+
+// The message a form's action left in App.ui.formError (nothing chosen, no
+// name typed): the form stays open and says why.
+export function renderFormError() {
+  return App.ui.formError ? `<p class="warn-text" role="alert">${escapeHtml(App.ui.formError)}</p>` : "";
 }
 
 // Top of every screen: the mark, a title, an optional line under it and an
@@ -102,6 +112,7 @@ const ICONS = {
   plus: '<path d="M12 5v14M5 12h14"/>',
   close: '<path d="M6 6l12 12M18 6 6 18"/>',
   check: '<path d="m5 12 5 5 9-10"/>',
+  more: '<circle cx="5" cy="12" r="1"/><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/>',
 };
 
 export function icon(name) {
@@ -123,4 +134,14 @@ export function renderCurrentView() {
   });
   document.getElementById("overlay-root").innerHTML = "";
   (routes[route] || routes.today)(document.getElementById("view"));
+  if (Store.writeFailed) showStorageError();
+}
+
+// Shown at the top of the screen once a write to storage has failed (see
+// writeJSON). Added straight to the page, not through a render: the failure
+// can come from typing into a set, which must not re-render.
+export function showStorageError() {
+  const view = document.getElementById("view");
+  if (view.querySelector(".storage-error")) return;
+  view.insertAdjacentHTML("afterbegin", `<p class="notice error storage-error" role="alert">Could not save: this browser's storage is full or blocked, so recent changes may be lost. Export a backup in Settings.</p>`);
 }

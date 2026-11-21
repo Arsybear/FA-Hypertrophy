@@ -30,11 +30,65 @@ export function readJSON(key, fallback) {
   return fallback;
 }
 
+// A write can fail (storage full or blocked). The change is then gone on the
+// next read, so it must not be silent: the UI shows a notice (see main.js).
 export function writeJSON(key, value) {
-  localStorage.setItem(key, JSON.stringify(value));
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+    return true;
+  } catch (e) {
+    console.error("Failed to write", key, e);
+    Store.writeFailed = true;
+    if (Store.onWriteError) Store.onWriteError();
+    return false;
+  }
+}
+
+// Sets / reps / weeks: a whole number from 1 to 99 (an absurd set count
+// would build that many set rows and overflow storage).
+export function cleanCount(v) {
+  return Math.min(99, Math.max(1, Math.floor(Number(v)) || 1));
+}
+
+// Weight increment in percent: 0 to 50.
+export function cleanPct(v) {
+  return Math.min(50, Math.max(0, Number(v) || 0));
+}
+
+// Brings every number a mesocycle is built from into the range the forms
+// allow. Data saved by older versions (which did not clamp) and imported
+// backups both go through this, so the rest of the app can rely on it.
+// Changes the list in place; returns whether anything changed.
+export function normalizeMesocycles(list) {
+  let changed = false;
+  const set = (obj, key, value) => {
+    if (obj[key] !== value) { obj[key] = value; changed = true; }
+  };
+  for (const meso of list) {
+    set(meso, "numWeeks", cleanCount(meso.numWeeks));
+    for (const day of meso.days || []) {
+      for (const slot of day.exercises || []) {
+        set(slot, "targetSets", cleanCount(slot.targetSets));
+        set(slot, "repRangeMin", cleanCount(slot.repRangeMin));
+        set(slot, "repRangeMax", Math.max(slot.repRangeMin, cleanCount(slot.repRangeMax)));
+        if (slot.weightIncrementPct != null) set(slot, "weightIncrementPct", cleanPct(slot.weightIncrementPct));
+      }
+    }
+  }
+  return changed;
 }
 
 export const Store = {
+  // Set by a failed write; main.js points onWriteError at the notice.
+  writeFailed: false,
+  onWriteError: null,
+
+  // Run once at startup: see normalizeMesocycles. Writes only on a change.
+  normalize() {
+    const list = Store.getMesocycles();
+    if (normalizeMesocycles(list)) Store.saveMesocycles(list);
+  },
+
   // --- Exercise library ---
   getExercises() {
     return readJSON(KEYS.exercises, []);
@@ -240,13 +294,27 @@ export const Store = {
     };
   },
   // Replaces everything. The caller has already run validateBackup. The data
-  // being replaced is kept under fah_before_import, so a wrong file can be
-  // undone by hand.
+  // being replaced is kept under fah_before_import (when there is room), so
+  // a wrong file can be undone by hand. All or nothing: if storage runs out
+  // part-way, what was there is put back and false is returned, so the app
+  // never runs on a mix of two data sets.
   importBackup(data) {
-    localStorage.setItem("fah_before_import", JSON.stringify(Store.exportBackup()));
-    writeJSON(KEYS.exercises, data.exercises);
-    writeJSON(KEYS.mesocycles, data.mesocycles);
-    writeJSON(KEYS.workouts, data.workouts);
+    const before = Store.exportBackup();
+    try { localStorage.setItem("fah_before_import", JSON.stringify(before)); } catch (e) { /* no room for the copy */ }
+    normalizeMesocycles(data.mesocycles);
+    const keys = ["exercises", "mesocycles", "workouts"];
+    try {
+      for (const k of keys) localStorage.setItem(KEYS[k], JSON.stringify(data[k]));
+      return true;
+    } catch (e) {
+      console.error("Import failed", e);
+      try {
+        // The copy is the same data that is being put back: free its space.
+        localStorage.removeItem("fah_before_import");
+        for (const k of keys) localStorage.setItem(KEYS[k], JSON.stringify(before[k]));
+      } catch (e2) { console.error("Restore after a failed import failed", e2); }
+      return false;
+    }
   },
 };
 
@@ -256,6 +324,9 @@ const BACKUP_APP = "fa-hypertrophy";
 // HTML attributes and text without escaping (they are app-generated
 // everywhere else). So the whole file is rejected unless every one of them
 // has the shape the app itself writes. Returns an error message, or null.
+// Numbers only have to be numbers: one out of range is not rejected (data
+// from older versions can hold such values and must still restore) but
+// clamped by normalizeMesocycles when the backup is imported.
 export function validateBackup(data) {
   const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
   const id = (v) => typeof v === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(v);
@@ -263,6 +334,7 @@ export function validateBackup(data) {
   const num = (v) => typeof v === "number" && Number.isFinite(v);
   const optNum = (v) => v == null || num(v);
   const optBool = (v) => v == null || typeof v === "boolean";
+  const optOffset = (v) => v == null || (Number.isInteger(v) && v >= 0 && v <= 6);
   const date = (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) && isoDate(parseLocalDate(v)) === v;
   const all = (list, test) => Array.isArray(list) && list.every((item) => isObj(item) && test(item));
 
@@ -272,7 +344,7 @@ export function validateBackup(data) {
   const exercisesOk = all(data.exercises, (e) => id(e.id) && str(e.name) && (e.muscleGroup == null || str(e.muscleGroup)));
   const mesocyclesOk = all(data.mesocycles, (m) =>
     id(m.id) && str(m.name) && num(m.numWeeks) && date(m.startDate) && typeof m.active === "boolean"
-    && all(m.days, (d) => id(d.id) && str(d.name) && optNum(d.weekdayOffset) && optNum(d.order)
+    && all(m.days, (d) => id(d.id) && str(d.name) && optOffset(d.weekdayOffset) && optNum(d.order)
       && all(d.exercises, (slot) => id(slot.id) && id(slot.exerciseId) && num(slot.order) && num(slot.targetSets)
         && num(slot.repRangeMin) && num(slot.repRangeMax) && optNum(slot.weightIncrementPct))));
   const workoutsOk = all(data.workouts, (w) =>

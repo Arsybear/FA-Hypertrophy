@@ -1,4 +1,4 @@
-const CACHE_NAME = "fa-hypertrophy-v27";
+const CACHE_NAME = "fa-hypertrophy-v28";
 const ASSETS = [
   "./",
   "index.html",
@@ -24,7 +24,11 @@ const ASSETS = [
 ];
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(ASSETS)));
+  // cache: "reload" skips the browser's HTTP cache (GitHub Pages lets it keep
+  // files for 10 minutes), so a new version never precaches a mix of old and
+  // new files.
+  event.waitUntil(caches.open(CACHE_NAME).then((cache) =>
+    cache.addAll(ASSETS.map((url) => new Request(url, { cache: "reload" })))));
   self.skipWaiting();
 });
 

@@ -1,8 +1,7 @@
 import { Store } from "../store.js";
+import { MONTHS_SHORT } from "../schedule.js";
 import { isCompleteSet } from "../progression.js";
-import { App, escapeHtml, getExerciseMuscleGroup, renderCurrentView, renderMuscleTag, icon, pageHeader } from "../ui.js";
-
-const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+import { App, escapeHtml, getExerciseMuscleGroup, icon, pageHeader, plural, renderCurrentView, renderMuscleTag } from "../ui.js";
 
 export function renderHistory(container) {
   const workouts = Store.getWorkouts()
@@ -17,7 +16,7 @@ export function renderHistory(container) {
     return;
   }
 
-  container.innerHTML = `${pageHeader("History", `${workouts.length} workout${workouts.length === 1 ? "" : "s"} logged`)}
+  container.innerHTML = `${pageHeader("History", `${plural(workouts.length, "workout")} logged`)}
   <div class="history-list">
     ${workouts.map((w) => {
       const meso = mesos.find((m) => m.id === w.mesocycleId);
@@ -29,14 +28,14 @@ export function renderHistory(container) {
           <span class="date-badge"><span class="day">${day}</span><span class="mon">${MONTHS_SHORT[month - 1]}</span></span>
           <span class="history-entry-titles">
             <strong>${escapeHtml(w.dayName)}</strong>
-            <span class="muted">${year}${meso ? ` · ${escapeHtml(meso.name)}` : ""} · ${w.exercises.length} exercises · ${setCount} sets</span>
+            <span class="muted">${year}${meso ? ` · ${escapeHtml(meso.name)}` : ""} · ${plural(w.exercises.length, "exercise")} · ${plural(setCount, "set")}</span>
           </span>
           ${icon(open ? "up" : "down")}
         </button>
         ${open ? `<div class="history-detail">
           ${[...w.exercises].sort((a, b) => a.order - b.order).map((ex) => `
             <div class="history-exercise">
-              <span>${renderMuscleTag(getExerciseMuscleGroup(ex.exerciseId))} <strong>${escapeHtml(ex.exerciseName)}</strong></span>
+              <span>${renderMuscleTag(getExerciseMuscleGroup(ex.exerciseId, ex.exerciseName))} <strong>${escapeHtml(ex.exerciseName)}</strong></span>
               <span class="set-chips">${ex.sets.map((s) => isCompleteSet(s) ? `<span class="set-chip">${s.weight}×${s.reps}</span>` : `<span class="set-chip empty">—</span>`).join("")}</span>
             </div>`).join("")}
         </div>` : ""}

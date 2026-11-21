@@ -30,21 +30,32 @@ export function renderLineChart(title, unit, points) {
       <line class="chart-grid" x1="0" x2="${W}" y1="${y(min)}" y2="${y(min)}"/>
       <path class="chart-area" d="${line} L${x(last)} ${H} L${x(0)} ${H} Z"/>
       <path class="chart-line" d="${line}"/>
-      ${points.map((p, i) => `<g class="chart-point ${i === last ? "is-last" : ""}" data-chart-point data-readout="${escapeHtml(readout(p))}">
-        <rect x="${(x(i) - step / 2).toFixed(1)}" y="0" width="${step.toFixed(1)}" height="${H}"/>
+      ${points.map((p, i) => {
+        // Hit area: half a step to each side, kept inside the chart (the svg
+        // shows overflow, so a wider one would cover the chart next to it).
+        const left = Math.max(0, x(i) - step / 2), right = Math.min(W, x(i) + step / 2);
+        return `<g class="chart-point ${i === last ? "is-last" : ""}" data-chart-point data-readout="${escapeHtml(readout(p))}">
+        <rect x="${left.toFixed(1)}" y="0" width="${(right - left).toFixed(1)}" height="${H}"/>
         <circle cx="${x(i).toFixed(1)}" cy="${y(p.value).toFixed(1)}" r="5"/>
-      </g>`).join("")}
+      </g>`;
+      }).join("")}
     </svg>
     <div class="chart-axis muted"><span>${escapeHtml(points[0].label)}</span><span>${min === max ? fmt(min) : `${fmt(min)} – ${fmt(max)}`}</span><span>${escapeHtml(points[last].label)}</span></div>
   </figure>`;
 }
 
-// Delegated pointerover/click on a chart point: show that point's value in
-// the chart's readout and mark it; leaving the chart restores the latest.
+// Delegated pointerover/pointerout/click: show the hovered or tapped point's
+// value in the chart's readout and mark it. A mouse leaving the chart
+// restores the latest value; a lifted finger also fires pointerout, and
+// there the tapped value stays.
 export function handleChartPoint(e) {
   const chart = e.target.closest(".chart");
   if (!chart) return;
-  const point = e.type === "pointerleave" ? null : e.target.closest("[data-chart-point]");
+  let point = e.target.closest("[data-chart-point]");
+  if (e.type === "pointerout") {
+    if (e.pointerType !== "mouse" || chart.contains(e.relatedTarget)) return;
+    point = null;
+  }
   const readout = chart.querySelector(".chart-readout");
   chart.querySelectorAll(".chart-point.active").forEach((p) => p.classList.remove("active"));
   if (point) point.classList.add("active");

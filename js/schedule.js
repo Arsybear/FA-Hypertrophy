@@ -60,3 +60,24 @@ export function resolveDayForDate(mesocycle, date) {
 }
 
 export const WEEKDAY_LABELS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+export const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+// Whole calendar days from a to b. Rounded, because a day that holds a
+// daylight-saving change is 23 or 25 hours long.
+export function daysBetween(a, b) {
+  return Math.round((toDateOnly(b) - toDateOnly(a)) / 86400000);
+}
+
+// How a stored "YYYY-MM-DD" is shown everywhere: "Nov 21", with the year
+// only when it is not the current one.
+export function formatShortDate(isoDateStr, now = new Date()) {
+  const date = parseLocalDate(isoDateStr);
+  const year = date.getFullYear() === now.getFullYear() ? "" : `, ${date.getFullYear()}`;
+  return `${MONTHS_SHORT[date.getMonth()]} ${date.getDate()}${year}`;
+}
+
+// The same with the weekday in front: "Sat, Nov 21".
+export function formatDay(isoDateStr, now = new Date()) {
+  const date = parseLocalDate(isoDateStr);
+  return `${WEEKDAY_LABELS[jsDateToWeekdayIndex(date)].slice(0, 3)}, ${formatShortDate(isoDateStr, now)}`;
+}

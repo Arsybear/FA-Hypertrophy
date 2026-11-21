@@ -105,13 +105,43 @@ h3 {
 
 .muted { color: var(--muted); font-size: 13px; }
 .warn-text { color: var(--warn); font-size: 13px; margin: 6px 0; }
+.section-label {
+  margin: 4px 0 10px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.intro { margin-bottom: 12px; }
+
+/* A short note above the content: something the screen would otherwise
+   leave unsaid. */
+.notice {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-left: 3px solid var(--accent-soft);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.notice a { color: var(--accent-soft); }
+.notice.error { border-left-color: var(--danger); }
 .icon { width: 20px; height: 20px; flex: none; }
 
 /* ---------- page header ---------- */
 .page-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
 .page-mark { width: 40px; height: 40px; flex: none; }
 .page-titles { flex: 1; min-width: 0; }
-.page-titles h1 { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A long name wraps onto a second line; only a third is cut off. */
+.page-titles h1 {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
 
 /* ---------- surfaces ---------- */
 .card {
@@ -157,7 +187,7 @@ button, .btn {
 .btn.secondary { background: var(--surface-2); }
 .btn.ghost { background: transparent; color: var(--accent-soft); }
 .btn.danger, .btn-danger { background: transparent; border-color: var(--danger); color: var(--danger); }
-.btn.small { min-height: 36px; padding: 6px 12px; font-size: 13px; }
+.btn.small { padding: 8px 14px; font-size: 13px; }
 .btn.wide { width: 100%; }
 button:disabled { opacity: 0.35; cursor: default; }
 button:active:not(:disabled), .btn:active { transform: scale(0.97); }
@@ -166,8 +196,8 @@ button:active:not(:disabled), .btn:active { transform: scale(0.97); }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: var(--tap);
+  height: var(--tap);
   flex: none;
   padding: 0;
   border-radius: 50%;
@@ -313,7 +343,11 @@ label input, label select { margin-top: 4px; }
 .exercise-header { display: flex; align-items: flex-start; gap: 8px; }
 .ex-name-group { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .ex-name { font-size: 17px; font-weight: 700; letter-spacing: -0.01em; overflow-wrap: anywhere; }
-.exercise-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; max-width: 108px; margin: -4px -6px 0 0; }
+.exercise-actions { display: flex; flex: none; margin: -8px -8px 0 0; }
+/* The card's other actions, behind the "more" button: labelled, so nothing
+   has to be guessed from an icon. */
+.exercise-menu { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 10px; }
+.exercise-menu .btn { flex-direction: column; gap: 2px; padding: 6px 4px; font-size: 12px; }
 .ex-done-mark { display: inline-flex; vertical-align: -3px; margin-left: 6px; color: var(--success); }
 
 .muscle-tag {
@@ -343,7 +377,7 @@ label input, label select { margin-top: 4px; }
 
 .sets { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
 .set-row { display: grid; grid-template-columns: 28px 1fr 1fr var(--tap); gap: 8px; align-items: center; }
-.set-head { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
+.set-head { font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; text-align: center; }
 .set-num {
   width: 28px;
   height: 28px;
@@ -384,6 +418,12 @@ label input, label select { margin-top: 4px; }
 .exercise.complete { border-color: color-mix(in srgb, var(--success) 45%, var(--border)); }
 
 .add-exercise-area { margin-top: 12px; }
+
+/* A coming day's plan (nothing is generated before its day). */
+.preview-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 0; border-top: 1px solid var(--border); }
+.preview-row:first-child { border-top: none; padding-top: 0; }
+.preview-row:last-child { padding-bottom: 0; }
+.preview-row .muted { flex: none; font-variant-numeric: tabular-nums; }
 .finish-area { margin-top: 12px; }
 
 /* ---------- program ---------- */
@@ -395,7 +435,8 @@ label input, label select { margin-top: 4px; }
 .slot-row.group-start { border-top: 2px solid var(--border); }
 .slot-top { display: flex; align-items: flex-start; gap: 8px; }
 .slot-name { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-weight: 700; overflow-wrap: anywhere; }
-.slot-actions { display: flex; align-items: center; margin: -6px -6px 0 0; }
+.slot-actions { display: flex; flex: none; align-items: center; gap: 2px; margin: -8px -8px 0 0; }
+.slot-actions .btn { margin: 8px 0 0 6px; }
 .slot-fields { display: grid; grid-template-columns: 1fr 2fr 1fr; gap: 8px; margin-top: 8px; }
 .slot-fields label { margin: 0; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
 .slot-fields input { text-align: center; padding: 8px 4px; }

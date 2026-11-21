@@ -3,17 +3,19 @@ import assert from "node:assert";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { isoDate, parseLocalDate, resolveDayForDate } from "../js/schedule.js";
+import { daysBetween, formatDay, formatShortDate, isoDate, parseLocalDate, resolveDayForDate } from "../js/schedule.js";
 import { findLastLoggedSet, nextSet } from "../js/progression.js";
 import { APP_VERSION } from "../js/version.js";
 
 // store.js only touches localStorage inside functions, so a Map stands in.
 const memory = new Map();
+let fullKey = null; // a write to this key fails, as when storage is full
 globalThis.localStorage = {
   getItem: (k) => (memory.has(k) ? memory.get(k) : null),
-  setItem: (k, v) => memory.set(k, String(v)),
+  setItem: (k, v) => { if (k === fullKey) throw new Error("QuotaExceededError"); memory.set(k, String(v)); },
+  removeItem: (k) => memory.delete(k),
 };
-const { Store, validateBackup } = await import("../js/store.js");
+const { Store, normalizeMesocycles, validateBackup } = await import("../js/store.js");
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -51,6 +53,15 @@ assert.strictEqual(isoDate(parseLocalDate("2026-03-01")), "2026-03-01");
 const meso = { startDate: "2026-11-02", days: [{ id: "a", weekdayOffset: 0 }, { id: "b", weekdayOffset: 2 }] };
 assert.strictEqual(resolveDayForDate(meso, parseLocalDate("2026-11-11")).id, "b");
 assert.strictEqual(resolveDayForDate(meso, parseLocalDate("2026-11-10")), null);
+// Whole days, also across a daylight-saving change (a 23 or 25 hour day).
+assert.strictEqual(daysBetween(parseLocalDate("2026-03-02"), parseLocalDate("2026-03-30")), 28);
+assert.strictEqual(daysBetween(parseLocalDate("2026-10-19"), parseLocalDate("2026-11-16")), 28);
+assert.strictEqual(daysBetween(parseLocalDate("2026-11-21"), parseLocalDate("2026-11-20")), -1);
+// One date format: the year only outside the current one.
+const now = parseLocalDate("2026-11-21");
+assert.strictEqual(formatShortDate("2026-11-06", now), "Nov 6");
+assert.strictEqual(formatShortDate("2025-12-31", now), "Dec 31, 2025");
+assert.strictEqual(formatDay("2026-11-21", now), "Sat, Nov 21");
 
 // Copying a mesocycle: new ids throughout, inactive, same weekday, no overlap.
 localStorage.setItem("fah_mesocycles", JSON.stringify([{
@@ -82,9 +93,55 @@ assert.ok(tampered((b) => { b.mesocycles[0].days = "x"; }));
 assert.ok(tampered((b) => { b.app = "other"; }));
 assert.ok(validateBackup(null));
 assert.ok(validateBackup([]));
-Store.importBackup(backup);
+assert.ok(tampered((b) => { b.mesocycles[0].days[0].weekdayOffset = 2.5; }));
+assert.ok(tampered((b) => { b.mesocycles[0].days[0].weekdayOffset = 7; }));
+assert.strictEqual(Store.importBackup(backup), true);
 assert.strictEqual(Store.getWorkouts().length, 1);
 assert.ok(localStorage.getItem("fah_before_import"));
+
+// Numbers out of range are not a reason to refuse a backup (older versions
+// did not clamp, and that data must still restore): they are clamped on
+// import, and once at startup for what is already stored.
+const wild = JSON.parse(JSON.stringify(backup));
+wild.mesocycles[0].numWeeks = 1e9;
+Object.assign(wild.mesocycles[0].days[0].exercises[0], { targetSets: 1e9, repRangeMin: 0, repRangeMax: -3, weightIncrementPct: 900 });
+assert.strictEqual(validateBackup(wild), null);
+assert.strictEqual(Store.importBackup(wild), true);
+const clamped = Store.getMesocycles()[0];
+assert.strictEqual(clamped.numWeeks, 99);
+assert.deepStrictEqual(
+  (({ targetSets, repRangeMin, repRangeMax, weightIncrementPct }) => ({ targetSets, repRangeMin, repRangeMax, weightIncrementPct }))(clamped.days[0].exercises[0]),
+  { targetSets: 99, repRangeMin: 1, repRangeMax: 1, weightIncrementPct: 50 });
+const fine = [{ numWeeks: 6, days: [{ exercises: [{ targetSets: 3, repRangeMin: 8, repRangeMax: 12 }, { targetSets: 2, repRangeMin: 5, repRangeMax: 10, weightIncrementPct: 2.5 }] }] }];
+const fineBefore = JSON.stringify(fine);
+assert.strictEqual(normalizeMesocycles(fine), false); // valid data is left exactly as it is
+assert.strictEqual(JSON.stringify(fine), fineBefore);
+localStorage.setItem("fah_mesocycles", JSON.stringify([{ id: "m9", name: "Old", numWeeks: 0, startDate: "2026-10-05", active: true, days: [] }]));
+Store.normalize();
+assert.strictEqual(Store.getMesocycles()[0].numWeeks, 1);
+
+// An import that runs out of space part-way puts back what was there.
+const realError = console.error;
+console.error = () => {}; // the failures below are logged on purpose
+Store.importBackup(backup);
+const before = ["fah_exercises", "fah_mesocycles", "fah_workouts"].map((k) => localStorage.getItem(k));
+const other = JSON.parse(JSON.stringify(backup));
+other.mesocycles[0].name = "Other";
+other.workouts = [];
+fullKey = "fah_workouts";
+assert.strictEqual(Store.importBackup(other), false);
+fullKey = null;
+assert.deepStrictEqual(["fah_exercises", "fah_mesocycles", "fah_workouts"].map((k) => localStorage.getItem(k)), before);
+
+// A failed write is reported, not thrown and not silent.
+let reported = 0;
+Store.onWriteError = () => { reported++; };
+fullKey = "fah_exercises";
+Store.addExercise("Does not fit", "Other");
+fullKey = null;
+assert.strictEqual(reported, 1);
+assert.strictEqual(Store.writeFailed, true);
+console.error = realError;
 
 // The version shown in Settings is the service worker cache version.
 assert.ok(fs.readFileSync(path.join(root, "sw.js"), "utf8").includes(`"fa-hypertrophy-v${APP_VERSION}"`), "APP_VERSION and CACHE_NAME differ");

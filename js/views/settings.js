@@ -1,8 +1,12 @@
 import { APP_VERSION } from "../version.js";
-import { Store, validateBackup } from "../store.js";
-import { WEEKDAY_LABELS, isoDate, jsDateToWeekdayIndex, mesocycleStartWeekday, parseLocalDate } from "../schedule.js";
-import { App, cleanCount, escapeHtml, renderCurrentView, renderMuscleTag, icon, pageHeader } from "../ui.js";
-import { handleTodayChange } from "./today.js";
+import { Store, cleanCount, validateBackup } from "../store.js";
+import { WEEKDAY_LABELS, formatDay, isoDate, jsDateToWeekdayIndex, mesocycleStartWeekday, parseLocalDate } from "../schedule.js";
+import { App, escapeHtml, icon, pageHeader, plural, renderCurrentView, renderMuscleTag } from "../ui.js";
+
+// One line under a mesocycle's name in the list.
+function mesoSummary(m) {
+  return `${plural(m.numWeeks, "week")} · starts ${formatDay(m.startDate)}`;
+}
 
 export function renderSettings(container) {
   const mesos = Store.getMesocycles().sort((a, b) => (a.startDate < b.startDate ? 1 : -1));
@@ -27,7 +31,7 @@ export function renderSettings(container) {
           <div class="card meso-item ${m.active ? "active-meso" : ""}">
             <div>
               <strong>${escapeHtml(m.name)}</strong>
-              <span class="muted">${m.numWeeks}wk · starts ${m.startDate}</span>
+              <span class="muted">${mesoSummary(m)}</span>
             </div>
             <span class="form-actions">
               ${m.active ? `<span class="badge">Active</span>` : `<button class="btn small" data-action="switch-active" data-id="${m.id}">Make active</button>`}
@@ -38,10 +42,10 @@ export function renderSettings(container) {
     `}
 
     ${active ? `
-      <h3>Edit "${escapeHtml(active.name)}"</h3>
+      <h3 data-role="edit-heading">Edit "${escapeHtml(active.name)}"</h3>
       <div class="card">
         <label>Name <input type="text" data-role="edit-name" value="${escapeHtml(active.name)}"></label>
-        <label>Weeks <input type="number" min="1" data-role="edit-weeks" value="${active.numWeeks}"></label>
+        <label>Weeks <input type="number" inputmode="numeric" min="1" max="99" data-role="edit-weeks" value="${active.numWeeks}"></label>
         <label>Start date <input type="date" data-role="edit-start-date" value="${active.startDate}"></label>
         <p class="muted">Falls on a <span data-role="edit-start-weekday-hint">${WEEKDAY_LABELS[mesocycleStartWeekday(active)]}</span> — day 1 of the program always starts there.</p>
       </div>
@@ -50,7 +54,7 @@ export function renderSettings(container) {
     <h3>Create new mesocycle</h3>
     <div class="card">
       <label>Name <input type="text" data-role="new-meso-name" placeholder="e.g. Meso 1"></label>
-      <label>Weeks <input type="number" min="1" value="6" data-role="new-meso-weeks"></label>
+      <label>Weeks <input type="number" inputmode="numeric" min="1" max="99" value="6" data-role="new-meso-weeks"></label>
       <label>Start date <input type="date" data-role="new-meso-start-date" value="${isoDate(new Date())}"></label>
       <p class="muted">Falls on a <span data-role="new-meso-start-weekday-hint">${WEEKDAY_LABELS[jsDateToWeekdayIndex(new Date())]}</span> — day 1 of the program always starts there.</p>
       <button class="btn primary wide" data-action="create-meso">Create mesocycle</button>
@@ -63,8 +67,8 @@ export function renderSettings(container) {
       ${App.pendingImport ? `
         <div class="inline-form">
           <p><strong>Replace all current data?</strong></p>
-          <p class="muted">Now: ${Store.getMesocycles().length} mesocycles, ${Store.getWorkouts().length} workouts.<br>
-          Backup from ${escapeHtml(String(App.pendingImport.exportedAt || "").slice(0, 10))}: ${App.pendingImport.mesocycles.length} mesocycles, ${App.pendingImport.workouts.length} workouts.</p>
+          <p class="muted">Now: ${plural(Store.getMesocycles().length, "mesocycle")}, ${plural(Store.getWorkouts().length, "workout")}.<br>
+          Backup${backupDate(App.pendingImport)}: ${plural(App.pendingImport.mesocycles.length, "mesocycle")}, ${plural(App.pendingImport.workouts.length, "workout")}.</p>
           <div class="form-actions">
             <button class="btn small danger" data-action="confirm-import">Replace</button>
             <button class="btn small ghost" data-action="cancel-import">Cancel</button>
@@ -94,6 +98,13 @@ export function renderSettings(container) {
     `}
     <p class="about muted">FA Hypertrophy · version ${APP_VERSION}</p>
   `;
+}
+
+// " from Sat, Nov 21" for the import confirmation; exportedAt is outside
+// input, so anything that is not a date is left out.
+function backupDate(backup) {
+  const day = String(backup.exportedAt || "").slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(day) && isoDate(parseLocalDate(day)) === day ? ` from ${formatDay(day)}` : "";
 }
 
 // Hands the backup to the user as a file. An installed iOS app cannot
@@ -146,10 +157,10 @@ export function handleSettingsAction(action, btn, view) {
   } else if (action === "copy-meso") {
     Store.cloneMesocycle(btn.dataset.id, isoDate(new Date()));
   } else if (action === "confirm-import") {
-    Store.importBackup(App.pendingImport);
+    const imported = Store.importBackup(App.pendingImport);
     App.pendingImport = null;
-    App.ui.backupMessage = "Backup imported.";
-    App.ui.backupError = false;
+    App.ui.backupMessage = imported ? "Backup imported." : "Not enough storage space for this backup. Nothing was changed.";
+    App.ui.backupError = !imported;
   } else if (action === "cancel-import") {
     App.pendingImport = null;
   } else if (action === "create-meso") {
@@ -197,12 +208,15 @@ export function handleSettingsChange(target) {
     updateStartWeekdayHint(target, "edit-start-weekday-hint");
   }
   // No renderCurrentView(): avoid stealing focus mid-edit (see
-  // handleTodayChange). Patch the mesocycle-list summary line in place so
-  // it still reflects the edit.
+  // handleTodayChange). Patch what shows the edited values in place: the
+  // mesocycle's line in the list, its Copy button's label and the heading.
   const updated = Store.getActiveMesocycle();
   const item = document.querySelector(".meso-item.active-meso");
   if (item) {
     item.querySelector("strong").textContent = updated.name;
-    item.querySelector(".muted").textContent = `${updated.numWeeks}wk · starts ${updated.startDate}`;
+    item.querySelector(".muted").textContent = mesoSummary(updated);
+    item.querySelector('[data-action="copy-meso"]').setAttribute("aria-label", `Copy ${updated.name}`);
   }
+  const heading = document.querySelector('[data-role="edit-heading"]');
+  if (heading) heading.textContent = `Edit "${updated.name}"`;
 }
