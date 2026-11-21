@@ -1,4 +1,4 @@
-const CACHE_NAME = "fa-hypertrophy-v25";
+const CACHE_NAME = "fa-hypertrophy-v26";
 const ASSETS = [
   "./",
   "index.html",
@@ -16,6 +16,9 @@ const ASSETS = [
   "manifest.json",
   "icons/icon-192.png",
   "icons/icon-512.png",
+  "icons/apple-touch-icon.png",
+  "icons/icon.svg",
+  "icons/mark.svg",
 ];
 
 self.addEventListener("install", (event) => {

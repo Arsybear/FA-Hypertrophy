@@ -1,6 +1,6 @@
 import { Store } from "../store.js";
 import { WEEKDAY_LABELS, isoDate, jsDateToWeekdayIndex, mesocycleStartWeekday, parseLocalDate } from "../schedule.js";
-import { App, cleanCount, escapeHtml, renderCurrentView, renderMuscleTag } from "../ui.js";
+import { App, cleanCount, escapeHtml, renderCurrentView, renderMuscleTag, icon, pageHeader } from "../ui.js";
 import { handleTodayChange } from "./today.js";
 
 export function renderSettings(container) {
@@ -12,13 +12,14 @@ export function renderSettings(container) {
   const inUse = new Set(mesos.flatMap((m) => m.days.flatMap((d) => d.exercises.map((slot) => slot.exerciseId))));
 
   container.innerHTML = `
+    ${pageHeader("Settings")}
     ${App.updateAvailable ? `
       <div class="card update-banner">
         <p>A new version of this app is available.</p>
-        <button class="btn primary" data-action="reload-app">Refresh Now</button>
+        <button class="btn small primary" data-action="reload-app">Refresh now</button>
       </div>
     ` : ""}
-    <h2>Mesocycles</h2>
+    <h3>Mesocycles</h3>
     ${mesos.length === 0 ? `<p class="muted">No mesocycles yet.</p>` : `
       <div class="meso-list">
         ${mesos.map((m) => `
@@ -27,7 +28,7 @@ export function renderSettings(container) {
               <strong>${escapeHtml(m.name)}</strong>
               <span class="muted">${m.numWeeks}wk · starts ${m.startDate}</span>
             </div>
-            ${m.active ? `<span class="badge">Active</span>` : `<button data-action="switch-active" data-id="${m.id}">Make Active</button>`}
+            ${m.active ? `<span class="badge">Active</span>` : `<button class="btn small" data-action="switch-active" data-id="${m.id}">Make active</button>`}
           </div>`).join("")}
       </div>
     `}
@@ -42,16 +43,16 @@ export function renderSettings(container) {
       </div>
     ` : ""}
 
-    <h3>Create New Mesocycle</h3>
+    <h3>Create new mesocycle</h3>
     <div class="card">
       <label>Name <input type="text" data-role="new-meso-name" placeholder="e.g. Meso 1"></label>
       <label>Weeks <input type="number" min="1" value="6" data-role="new-meso-weeks"></label>
       <label>Start date <input type="date" data-role="new-meso-start-date" value="${isoDate(new Date())}"></label>
       <p class="muted">Falls on a <span data-role="new-meso-start-weekday-hint">${WEEKDAY_LABELS[jsDateToWeekdayIndex(new Date())]}</span> — day 1 of the program always starts there.</p>
-      <button class="btn primary" data-action="create-meso">Create</button>
+      <button class="btn primary wide" data-action="create-meso">Create mesocycle</button>
     </div>
 
-    <h3>Exercise Library</h3>
+    <h3>Exercise library</h3>
     ${exercises.length === 0 ? `<p class="muted">No exercises yet.</p>` : `
       <div class="meso-list">
         ${exercises.map((ex) => `
@@ -61,9 +62,9 @@ export function renderSettings(container) {
               <strong>${escapeHtml(ex.name)}</strong>
             </div>
             ${inUse.has(ex.id) ? `<span class="muted">In a program</span>` : App.ui.removeExerciseOpen === ex.id
-              ? `<span><button data-action="confirm-remove-exercise" data-id="${ex.id}">Confirm</button>
-                 <button data-action="cancel-remove-exercise" data-id="${ex.id}">Cancel</button></span>`
-              : `<button class="btn-danger" data-action="open-remove-exercise" data-id="${ex.id}">Remove</button>`}
+              ? `<span class="form-actions"><button class="btn small danger" data-action="confirm-remove-exercise" data-id="${ex.id}">Remove</button>
+                 <button class="btn small ghost" data-action="cancel-remove-exercise" data-id="${ex.id}">Cancel</button></span>`
+              : `<button class="icon-btn" data-action="open-remove-exercise" data-id="${ex.id}" aria-label="Remove ${escapeHtml(ex.name)}">${icon("trash")}</button>`}
           </div>`).join("")}
       </div>
     `}

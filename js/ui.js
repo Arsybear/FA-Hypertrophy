@@ -69,8 +69,43 @@ export function currentRoute() {
 }
 
 export function emptyMesoState() {
-  return `<div class="empty-state"><p>No active mesocycle yet.</p>
-    <a href="#/settings" class="btn">Create one in Settings</a></div>`;
+  return `<div class="empty-state">
+    <img class="empty-mark" src="icons/mark.svg" alt="">
+    <h2>No active mesocycle</h2>
+    <p class="muted">Create a training block to start logging.</p>
+    <a href="#/settings" class="btn primary">Create one in Settings</a>
+  </div>`;
+}
+
+// Top of every screen: the mark, a title, an optional line under it and an
+// optional control on the right (already-rendered HTML).
+export function pageHeader(title, subtitle = "", right = "") {
+  return `<header class="page-header">
+    <img class="page-mark" src="icons/mark.svg" alt="">
+    <div class="page-titles">
+      <h1>${escapeHtml(title)}</h1>
+      ${subtitle ? `<p class="muted">${escapeHtml(subtitle)}</p>` : ""}
+    </div>
+    ${right}
+  </header>`;
+}
+
+const ICONS = {
+  calendar: '<rect x="3" y="5" width="18" height="16" rx="3"/><path d="M3 10h18M8 3v4M16 3v4"/>',
+  history: '<path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/>',
+  swap: '<path d="M7 4 3 8l4 4M3 8h14M17 20l4-4-4-4M21 16H7"/>',
+  trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
+  up: '<path d="m6 15 6-6 6 6"/>',
+  down: '<path d="m6 9 6 6 6-6"/>',
+  left: '<path d="m15 6-6 6 6 6"/>',
+  right: '<path d="m9 6 6 6-6 6"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  close: '<path d="M6 6l12 12M18 6 6 18"/>',
+  check: '<path d="m5 12 5 5 9-10"/>',
+};
+
+export function icon(name) {
+  return `<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICONS[name]}</svg>`;
 }
 
 // Views register their render function here instead of this file importing

@@ -1,22 +1,56 @@
 import { Store, uid } from "../store.js";
 import { WEEKDAY_LABELS, addDays, isoDate, jsDateToWeekdayIndex, parseLocalDate, resolveDayForDate } from "../schedule.js";
 import { DEFAULT_INCREMENT_PCT, blankSet, buildPrefilledSets, equivalentReps, isCompleteSet, nextSet } from "../progression.js";
-import { App, cleanCount, cssEscape, emptyMesoState, escapeHtml, fmtNum, getExerciseMuscleGroup, renderCurrentView, renderExerciseOptionsGrouped, renderMuscleGroupSelect, renderMuscleTag } from "../ui.js";
-import { getExerciseHistory, getTodayContext } from "../workout.js";
+import { App, cleanCount, cssEscape, emptyMesoState, escapeHtml, fmtNum, getExerciseMuscleGroup, renderCurrentView, renderExerciseOptionsGrouped, renderMuscleGroupSelect, renderMuscleTag, icon, pageHeader } from "../ui.js";
+import { getExerciseHistory, getTodayContext, isTouchedSet } from "../workout.js";
 
-export function renderDateNav(meso, dateIso, isToday) {
+const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+
+function workoutStatusClass(workout) {
+  return workout ? (workout.finished ? "finished" : "started") : "";
+}
+
+// Screen header plus a Monday-to-Sunday strip of the viewed date's week: each
+// day is a link (an ordinary route change), with the same status dot as the
+// month calendar. Like the calendar it only reads workouts, never generates.
+export function renderDateNav(meso, dateIso, isToday, title) {
   const date = parseLocalDate(dateIso);
-  const prevIso = isoDate(addDays(date, -1));
-  const nextIso = isoDate(addDays(date, 1));
-  const canGoPrev = dateIso > meso.startDate;
-  return `<div class="date-nav">
+  const todayIso = isoDate(new Date());
+  const monday = addDays(date, -jsDateToWeekdayIndex(date));
+  const workoutsByDate = {};
+  Store.getWorkouts()
+    .filter((w) => w.mesocycleId === meso.id)
+    .forEach((w) => { workoutsByDate[w.date] = w; });
+  const week = Math.floor((date - parseLocalDate(meso.startDate)) / (7 * 86400000)) + 1;
+  const subtitle = `${WEEKDAY_LABELS[jsDateToWeekdayIndex(date)]}, ${MONTHS_SHORT[date.getMonth()]} ${date.getDate()}`
+    + (dateIso >= meso.startDate ? ` · Week ${week}` : "");
+
+  const days = Array.from({ length: 7 }, (_, i) => {
+    const d = addDays(monday, i);
+    const iso = isoDate(d);
+    const inBlock = iso >= meso.startDate;
+    const workout = workoutsByDate[iso];
+    const trains = inBlock && (workout || resolveDayForDate(meso, d));
+    const classes = ["week-day", iso === dateIso ? "selected" : "", iso === todayIso ? "today" : "",
+      trains ? "train" : "", workoutStatusClass(workout)].filter(Boolean).join(" ");
+    const inner = `<span class="week-day-name">${WEEKDAY_LABELS[i].slice(0, 2)}</span>
+      <span class="week-day-num">${d.getDate()}</span><span class="cal-dot"></span>`;
+    return inBlock
+      ? `<a class="${classes}" href="#/today?date=${iso}" aria-label="${WEEKDAY_LABELS[i]} ${iso}">${inner}</a>`
+      : `<span class="${classes} outside">${inner}</span>`;
+  }).join("");
+
+  const prevWeekIso = isoDate(addDays(date, -7));
+  const canGoPrev = isoDate(addDays(monday, -1)) >= meso.startDate;
+  return `${pageHeader(title, subtitle, `
+    ${!isToday ? `<a class="btn small ghost" href="#/today">Today</a>` : ""}
+    <button class="icon-btn ${App.ui.calendarOpen ? "active" : ""}" data-action="toggle-calendar" aria-label="Show training block calendar">${icon("calendar")}</button>`)}
+  <div class="week-strip">
     ${canGoPrev
-      ? `<a class="btn small" href="#/today?date=${prevIso}">‹ Prev</a>`
-      : `<span class="btn small" aria-disabled="true">‹ Prev</span>`}
-    <span class="muted">${WEEKDAY_LABELS[jsDateToWeekdayIndex(date)]} · ${dateIso}</span>
-    <button class="btn small" data-action="toggle-calendar" aria-label="Show training block calendar">📅</button>
-    ${!isToday ? `<a class="btn small" href="#/today?date=${nextIso}">Next ›</a>
-    <a class="btn small" href="#/today">Today</a>` : ""}
+      ? `<a class="icon-btn" href="#/today?date=${prevWeekIso < meso.startDate ? meso.startDate : prevWeekIso}" aria-label="Previous week">${icon("left")}</a>`
+      : `<span class="icon-btn" aria-disabled="true">${icon("left")}</span>`}
+    <div class="week-days">${days}</div>
+    <a class="icon-btn" href="#/today?date=${isoDate(addDays(date, 7))}" aria-label="Next week">${icon("right")}</a>
   </div>
   ${App.ui.calendarOpen ? renderCalendarPanel(meso, dateIso) : ""}`;
 }
@@ -56,14 +90,14 @@ export function renderCalendarPanel(meso, selectedIso) {
   const monthNavBtn = (label, target, name) => {
     const iso = isoDate(target).slice(0, 7);
     const off = iso < firstMonth || iso > lastMonth;
-    return `<button class="btn small" data-action="calendar-month" data-month="${iso}" aria-label="${name} month" ${off ? "disabled" : ""}>${label}</button>`;
+    return `<button class="icon-btn" data-action="calendar-month" data-month="${iso}" aria-label="${name} month" ${off ? "disabled" : ""}>${icon(label)}</button>`;
   };
 
   return `<div class="calendar-panel">
     <div class="calendar-month-nav">
-      ${monthNavBtn("‹", new Date(year, monthNum - 2, 1), "Previous")}
+      ${monthNavBtn("left", new Date(year, monthNum - 2, 1), "Previous")}
       <strong>${first.toLocaleDateString(undefined, { month: "long", year: "numeric" })}</strong>
-      ${monthNavBtn("›", new Date(year, monthNum, 1), "Next")}
+      ${monthNavBtn("right", new Date(year, monthNum, 1), "Next")}
     </div>
     <div class="calendar-weekdays">${WEEKDAY_LABELS.map((w) => `<span>${w.slice(0, 2)}</span>`).join("")}</div>
     <div class="calendar-grid">
@@ -82,13 +116,12 @@ export function renderCalendarCell(c, todayIso, selectedIso) {
   const { dateIso, date, dayTemplate, workout } = c;
   if (!c.inBlock) return `<span class="cal-cell rest outside"><span class="cal-daynum">${date.getDate()}</span></span>`;
   const isRest = !dayTemplate && !workout;
-  const finished = workout && workout.finished;
   const classes = [
     "cal-cell",
     isRest ? "rest" : "train",
     dateIso === todayIso ? "today" : "",
     dateIso === selectedIso ? "selected" : "",
-    finished ? "finished" : (workout ? "started" : ""),
+    workoutStatusClass(workout),
   ].filter(Boolean).join(" ");
   return `<a class="${classes}" href="#/today?date=${dateIso}" title="${escapeHtml(workout ? workout.dayName : dayTemplate ? dayTemplate.name : "Rest day")} — ${dateIso}">
     <span class="cal-daynum">${date.getDate()}</span>
@@ -102,18 +135,21 @@ export function renderToday(container) {
 
   if (!dayTemplate && !workout) {
     container.innerHTML = `
-      ${renderDateNav(meso, dateIso, isToday)}
-      <div class="card">
-        <h2>Rest day</h2>
-        <p class="muted">nothing scheduled.</p>
+      ${renderDateNav(meso, dateIso, isToday, "Rest day")}
+      <div class="empty-state">
+        <h2>Nothing scheduled</h2>
+        <p class="muted">${dateIso < meso.startDate ? "This is before the mesocycle starts." : "Recover. Next session is on the strip above."}</p>
       </div>`;
     return;
   }
 
   if (!workout) {
     container.innerHTML = `
-      ${renderDateNav(meso, dateIso, isToday)}
-      <div class="card"><p class="muted">Not reached yet.</p></div>`;
+      ${renderDateNav(meso, dateIso, isToday, dayTemplate.name)}
+      <div class="empty-state">
+        <h2>Not reached yet</h2>
+        <p class="muted">This workout opens on its day.</p>
+      </div>`;
     return;
   }
 
@@ -127,20 +163,26 @@ export function renderToday(container) {
     return renderExerciseBlock(workout, ex, isGroupStart, isGroupEnd);
   }).join("");
 
+  const allSets = workout.exercises.flatMap((ex) => ex.sets);
+  const doneSets = allSets.filter((s) => isSetDone(workout, s)).length;
+
   container.innerHTML = `
-    ${renderDateNav(meso, dateIso, isToday)}
-    <div class="workout-header">
-      <h2>${escapeHtml(workout.dayName)}</h2>
-      <p class="muted">${workout.finished ? "Finished" : ""}</p>
+    ${renderDateNav(meso, dateIso, isToday, workout.dayName)}
+    <div class="progress-card ${workout.finished ? "finished" : ""}">
+      <div class="progress-text">
+        <span class="progress-count" data-role="sets-done"><strong>${doneSets}</strong> / ${allSets.length} sets</span>
+        <span class="status-pill">${workout.finished ? "Finished" : doneSets > 0 ? "In progress" : "Not started"}</span>
+      </div>
+      <div class="progress-track"><div class="progress-fill" style="width:${allSets.length ? (100 * doneSets) / allSets.length : 0}%"></div></div>
     </div>
     ${exerciseBlocksHtml}
     ${!workout.finished ? `<div class="add-exercise-area">
-      ${App.ui.addOpen ? renderAddExerciseForm() : `<button class="btn" data-action="open-add-exercise">+ Add Exercise</button>`}
+      ${App.ui.addOpen ? renderAddExerciseForm() : `<button class="btn ghost wide" data-action="open-add-exercise">${icon("plus")} Add exercise</button>`}
     </div>` : ""}
     <div class="finish-area">
       ${workout.finished
-        ? `<button class="btn secondary" data-action="reopen-workout">Reopen Workout</button>`
-        : `<button class="btn primary" data-action="finish-workout">Finish Workout</button>`}
+        ? `<button class="btn secondary wide" data-action="reopen-workout">Reopen workout</button>`
+        : `<button class="btn primary wide" data-action="finish-workout">Finish workout</button>`}
     </div>
   `;
   document.getElementById("overlay-root").innerHTML = historyEx ? renderHistorySheet(historyEx) : "";
@@ -153,50 +195,47 @@ export function renderExerciseBlock(workout, ex, isGroupStart, isGroupEnd) {
   const cardClass = [
     !isGroupStart ? "merge-top" : "", !isGroupEnd ? "merge-bottom" : "", complete ? "complete" : "",
   ].filter(Boolean).join(" ");
+  const off = workout.finished ? "disabled" : "";
   return `
     <div class="card exercise ${cardClass}" data-slot="${ex.slotId}">
       <div class="exercise-header">
-        <div class="reorder-btns">
-          <button data-action="move-up" data-slot="${ex.slotId}" ${workout.finished ? "disabled" : ""}>▲</button>
-          <button data-action="move-down" data-slot="${ex.slotId}" ${workout.finished ? "disabled" : ""}>▼</button>
-        </div>
         <div class="ex-name-group">
           ${renderMuscleTag(getExerciseMuscleGroup(ex.exerciseId))}
-          <strong class="ex-name">${escapeHtml(ex.exerciseName)}${complete ? `<span class="ex-done-mark" aria-label="completed">✓</span>` : ""}</strong>
+          <strong class="ex-name">${escapeHtml(ex.exerciseName)}${complete ? `<span class="ex-done-mark" aria-label="completed">${icon("check")}</span>` : ""}</strong>
+          <span class="rep-range muted">${ex.sets.length} × ${ex.repRangeMin}–${ex.repRangeMax} reps</span>
         </div>
-        <span class="rep-range muted">${ex.repRangeMin}-${ex.repRangeMax} reps</span>
-      </div>
-      <div class="exercise-actions">
-        <button data-action="open-history" data-slot="${ex.slotId}">History</button>
-        ${!workout.finished ? `
-          <button data-action="open-substitute" data-slot="${ex.slotId}">Swap</button>
-          <button data-action="open-remove" data-slot="${ex.slotId}">Remove</button>
-        ` : ""}
+        <div class="exercise-actions">
+          <button class="icon-btn" data-action="open-history" data-slot="${ex.slotId}" aria-label="History">${icon("history")}</button>
+          ${!workout.finished ? `
+            <button class="icon-btn" data-action="open-substitute" data-slot="${ex.slotId}" aria-label="Swap exercise">${icon("swap")}</button>
+            <button class="icon-btn" data-action="open-remove" data-slot="${ex.slotId}" aria-label="Remove exercise">${icon("trash")}</button>
+            <button class="icon-btn" data-action="move-up" data-slot="${ex.slotId}" aria-label="Move up" ${off}>${icon("up")}</button>
+            <button class="icon-btn" data-action="move-down" data-slot="${ex.slotId}" aria-label="Move down" ${off}>${icon("down")}</button>
+          ` : ""}
+        </div>
       </div>
       ${removeOpen ? renderRemoveForm(ex) : ""}
       ${subOpen ? renderSubstituteForm(ex) : ""}
-      <table class="sets">
-        <thead><tr><th>Set</th><th>Weight</th><th>Reps</th><th class="set-done-col" aria-label="Done"></th></tr></thead>
-        <tbody>
-          ${ex.sets.map((s, i) => {
-            const done = isSetDone(workout, s);
-            const locked = workout.finished || done ? "disabled" : "";
-            return `
-            <tr>
-              <td>${i + 1}</td>
-              <td><input type="number" step="0.5" inputmode="decimal" placeholder="${setWeightHint(s)}"
-                data-field="weight" data-slot="${ex.slotId}" data-set="${i}"
-                value="${fmtNum(s.weight)}" ${locked}></td>
-              <td><input type="number" inputmode="numeric" placeholder="${setRepsHint(ex, s)}"
-                data-field="reps" data-slot="${ex.slotId}" data-set="${i}"
-                value="${fmtNum(s.reps)}" ${locked}></td>
-              <td class="set-done-col"><input type="checkbox" data-role="set-done"
-                data-slot="${ex.slotId}" data-set="${i}" aria-label="Set ${i + 1} done"
-                ${done ? "checked" : ""} ${workout.finished ? "disabled" : ""}></td>
-            </tr>`;
-          }).join("")}
-        </tbody>
-      </table>
+      <div class="sets">
+        <div class="set-row set-head muted"><span>Set</span><span>Weight (lb)</span><span>Reps</span><span></span></div>
+        ${ex.sets.map((s, i) => {
+          const done = isSetDone(workout, s);
+          const locked = workout.finished || done ? "disabled" : "";
+          return `
+          <div class="set-row ${done ? "done" : ""}">
+            <span class="set-num">${i + 1}</span>
+            <input type="number" step="0.5" inputmode="decimal" placeholder="${setWeightHint(s)}"
+              data-field="weight" data-slot="${ex.slotId}" data-set="${i}" aria-label="Set ${i + 1} weight"
+              value="${fmtNum(s.weight)}" ${locked}>
+            <input type="number" inputmode="numeric" placeholder="${setRepsHint(ex, s)}"
+              data-field="reps" data-slot="${ex.slotId}" data-set="${i}" aria-label="Set ${i + 1} reps"
+              value="${fmtNum(s.reps)}" ${locked}>
+            <input type="checkbox" class="set-check" data-role="set-done"
+              data-slot="${ex.slotId}" data-set="${i}" aria-label="Set ${i + 1} done"
+              ${done ? "checked" : ""} ${workout.finished ? "disabled" : ""}>
+          </div>`;
+        }).join("")}
+      </div>
     </div>
   `;
 }
@@ -206,14 +245,17 @@ export function renderHistorySheet(ex) {
   return `<div class="history-sheet-backdrop" data-action="close-history">
     <div class="history-sheet" data-action="">
       <div class="history-sheet-header">
-        <strong>${escapeHtml(ex.exerciseName)}</strong>
-        <button data-action="close-history">✕</button>
+        <div>
+          ${renderMuscleTag(getExerciseMuscleGroup(ex.exerciseId))}
+          <h2>${escapeHtml(ex.exerciseName)}</h2>
+        </div>
+        <button class="icon-btn" data-action="close-history" aria-label="Close">${icon("close")}</button>
       </div>
       ${rows.length === 0
         ? `<p class="muted">No history yet.</p>`
         : rows.map((r) => `<div class="history-row">
             <span class="muted">${r.date} · ${escapeHtml(r.dayName)}</span>
-            ${r.sets.map((s) => isCompleteSet(s) ? `${s.weight}×${s.reps}` : "—").join(", ")}
+            <span class="set-chips">${r.sets.map((s) => isCompleteSet(s) ? `<span class="set-chip">${s.weight}×${s.reps}</span>` : `<span class="set-chip empty">—</span>`).join("")}</span>
           </div>`).join("")}
     </div>
   </div>`;
@@ -225,8 +267,8 @@ export function renderRemoveForm(ex) {
     <label><input type="radio" name="remove-scope-${ex.slotId}" value="workout" checked> This workout only</label>
     <label><input type="radio" name="remove-scope-${ex.slotId}" value="future"> All future workouts of this day</label>
     <div class="form-actions">
-      <button data-action="confirm-remove" data-slot="${ex.slotId}">Remove</button>
-      <button data-action="cancel-remove" data-slot="${ex.slotId}">Cancel</button>
+      <button class="btn small danger" data-action="confirm-remove" data-slot="${ex.slotId}">Remove</button>
+      <button class="btn small ghost" data-action="cancel-remove" data-slot="${ex.slotId}">Cancel</button>
     </div>
   </div>`;
 }
@@ -235,6 +277,7 @@ export function renderSubstituteForm(ex) {
   const currentGroup = getExerciseMuscleGroup(ex.exerciseId);
   return `<div class="inline-form" data-slot="${ex.slotId}">
     <p>Swap ${escapeHtml(ex.exerciseName)} for another ${escapeHtml(currentGroup)} exercise:</p>
+    ${ex.sets.some(isTouchedSet) ? `<p class="warn-text">Sets already entered for ${escapeHtml(ex.exerciseName)} will be cleared.</p>` : ""}
     <select data-role="sub-exercise-select" data-slot="${ex.slotId}">
       <option value="">-- choose existing --</option>
       ${renderExerciseOptionsGrouped(ex.exerciseId, currentGroup)}
@@ -244,15 +287,15 @@ export function renderSubstituteForm(ex) {
     <label><input type="radio" name="sub-scope-${ex.slotId}" value="workout" checked> This workout only</label>
     <label><input type="radio" name="sub-scope-${ex.slotId}" value="future"> All future workouts of this day</label>
     <div class="form-actions">
-      <button data-action="confirm-substitute" data-slot="${ex.slotId}">Swap</button>
-      <button data-action="cancel-substitute" data-slot="${ex.slotId}">Cancel</button>
+      <button class="btn small primary" data-action="confirm-substitute" data-slot="${ex.slotId}">Swap</button>
+      <button class="btn small ghost" data-action="cancel-substitute" data-slot="${ex.slotId}">Cancel</button>
     </div>
   </div>`;
 }
 
 export function renderAddExerciseForm() {
   return `<div class="inline-form">
-    <p>Add exercise:</p>
+    <p class="form-title">Add exercise</p>
     <select data-role="add-exercise-select">
       <option value="">-- choose existing --</option>
       ${renderExerciseOptionsGrouped(null)}
@@ -268,8 +311,8 @@ export function renderAddExerciseForm() {
     <label><input type="radio" name="add-scope" value="workout" checked> This workout only</label>
     <label><input type="radio" name="add-scope" value="future"> All future workouts of this day</label>
     <div class="form-actions">
-      <button data-action="confirm-add-exercise">Add</button>
-      <button data-action="cancel-add-exercise">Cancel</button>
+      <button class="btn small primary" data-action="confirm-add-exercise">Add</button>
+      <button class="btn small ghost" data-action="cancel-add-exercise">Cancel</button>
     </div>
   </div>`;
 }

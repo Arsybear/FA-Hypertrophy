@@ -1,6 +1,8 @@
 import { Store } from "../store.js";
 import { isCompleteSet } from "../progression.js";
-import { App, escapeHtml, getExerciseMuscleGroup, renderCurrentView, renderMuscleTag } from "../ui.js";
+import { App, escapeHtml, getExerciseMuscleGroup, renderCurrentView, renderMuscleTag, icon, pageHeader } from "../ui.js";
+
+const MONTHS_SHORT = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
 export function renderHistory(container) {
   const workouts = Store.getWorkouts()
@@ -9,24 +11,33 @@ export function renderHistory(container) {
   const mesos = Store.getMesocycles();
 
   if (workouts.length === 0) {
-    container.innerHTML = `<div class="empty-state"><p>No finished workouts yet.</p></div>`;
+    container.innerHTML = `${pageHeader("History")}
+      <div class="empty-state"><h2>No finished workouts yet</h2>
+      <p class="muted">Finish a workout and it shows up here.</p></div>`;
     return;
   }
 
-  container.innerHTML = `<div class="history-list">
+  container.innerHTML = `${pageHeader("History", `${workouts.length} workout${workouts.length === 1 ? "" : "s"} logged`)}
+  <div class="history-list">
     ${workouts.map((w) => {
       const meso = mesos.find((m) => m.id === w.mesocycleId);
       const open = App.ui.historyExpanded === w.id;
+      const [year, month, day] = w.date.split("-").map(Number);
+      const setCount = w.exercises.reduce((n, ex) => n + ex.sets.filter(isCompleteSet).length, 0);
       return `<div class="card history-entry">
-        <div class="history-entry-header" data-action="toggle-workout" data-id="${w.id}">
-          <strong>${w.date}</strong> — ${escapeHtml(w.dayName)}
-          <span class="muted">${meso ? escapeHtml(meso.name) : ""}</span>
-        </div>
+        <button class="history-entry-header" data-action="toggle-workout" data-id="${w.id}" aria-expanded="${open}">
+          <span class="date-badge"><span class="day">${day}</span><span class="mon">${MONTHS_SHORT[month - 1]}</span></span>
+          <span class="history-entry-titles">
+            <strong>${escapeHtml(w.dayName)}</strong>
+            <span class="muted">${year}${meso ? ` · ${escapeHtml(meso.name)}` : ""} · ${w.exercises.length} exercises · ${setCount} sets</span>
+          </span>
+          ${icon(open ? "up" : "down")}
+        </button>
         ${open ? `<div class="history-detail">
           ${[...w.exercises].sort((a, b) => a.order - b.order).map((ex) => `
             <div class="history-exercise">
               <span>${renderMuscleTag(getExerciseMuscleGroup(ex.exerciseId))} <strong>${escapeHtml(ex.exerciseName)}</strong></span>
-              <span>${ex.sets.map((s) => isCompleteSet(s) ? `${s.weight}×${s.reps}` : "—").join(", ")}</span>
+              <span class="set-chips">${ex.sets.map((s) => isCompleteSet(s) ? `<span class="set-chip">${s.weight}×${s.reps}</span>` : `<span class="set-chip empty">—</span>`).join("")}</span>
             </div>`).join("")}
         </div>` : ""}
       </div>`;

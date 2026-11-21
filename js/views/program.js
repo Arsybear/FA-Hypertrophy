@@ -1,7 +1,7 @@
 import { Store } from "../store.js";
 import { WEEKDAY_LABELS, getDayWeekdayOffset, mesocycleStartWeekday } from "../schedule.js";
 import { DEFAULT_INCREMENT_PCT } from "../progression.js";
-import { App, cleanCount, cssEscape, emptyMesoState, escapeHtml, getExerciseMuscleGroup, renderCurrentView, renderExerciseOptionsGrouped, renderMuscleGroupSelect, renderMuscleTag } from "../ui.js";
+import { App, cleanCount, cssEscape, emptyMesoState, escapeHtml, getExerciseMuscleGroup, renderCurrentView, renderExerciseOptionsGrouped, renderMuscleGroupSelect, renderMuscleTag, icon, pageHeader } from "../ui.js";
 import { handleTodayChange } from "./today.js";
 
 export function renderProgram(container) {
@@ -12,8 +12,7 @@ export function renderProgram(container) {
   const availableOffsets = [0, 1, 2, 3, 4, 5, 6].filter((i) => !usedOffsets.has(i));
 
   container.innerHTML = `
-    <h2>${escapeHtml(meso.name)}</h2>
-    <p class="muted">Start day: ${WEEKDAY_LABELS[mesocycleStartWeekday(meso)]} (${meso.startDate})</p>
+    ${pageHeader(meso.name, `${meso.numWeeks} weeks · starts ${WEEKDAY_LABELS[mesocycleStartWeekday(meso)]} ${meso.startDate}`)}
     ${sortedDays.map((day) => renderDayCard(meso, day)).join("")}
     <div class="add-exercise-area">
       ${App.ui.addDayOpen
@@ -25,13 +24,13 @@ export function renderProgram(container) {
                </select>
              </label>
              <div class="form-actions">
-               <button data-action="confirm-add-day">Add Day</button>
-               <button data-action="cancel-add-day">Cancel</button>
+               <button class="btn small primary" data-action="confirm-add-day">Add day</button>
+               <button class="btn small ghost" data-action="cancel-add-day">Cancel</button>
              </div>
            </div>`
         : availableOffsets.length === 0
           ? `<p class="muted">No more days can be added — every weekday is already scheduled.</p>`
-          : `<button class="btn" data-action="open-add-day">+ Add Day</button>`}
+          : `<button class="btn ghost wide" data-action="open-add-day">${icon("plus")} Add day</button>`}
     </div>
   `;
 }
@@ -41,64 +40,58 @@ export function renderDayCard(meso, day) {
   const sortedExercises = [...day.exercises].sort((a, b) => a.order - b.order);
   const removeConfirm = App.ui.removeDayConfirm === day.id;
   const addExOpen = App.ui.addExerciseToDay === day.id;
+  let prevGroup = null;
   return `
     <div class="card day-card" data-day="${day.id}">
       <div class="day-header">
-        <strong>${escapeHtml(day.name)}</strong>
-        <span class="muted">${weekday}</span>
+        <div class="day-titles">
+          <h2>${escapeHtml(day.name)}</h2>
+          <span class="muted">${weekday} · ${sortedExercises.length} exercise${sortedExercises.length === 1 ? "" : "s"}</span>
+        </div>
         ${removeConfirm
-          ? `<span><button data-action="confirm-remove-day" data-day="${day.id}">Confirm</button>
-             <button data-action="cancel-remove-day" data-day="${day.id}">Cancel</button></span>`
-          : `<button data-action="open-remove-day" data-day="${day.id}">Remove Day</button>`}
+          ? `<button class="btn small danger" data-action="confirm-remove-day" data-day="${day.id}">Remove</button>
+             <button class="btn small ghost" data-action="cancel-remove-day" data-day="${day.id}">Cancel</button>`
+          : `<button class="icon-btn" data-action="open-remove-day" data-day="${day.id}" aria-label="Remove day">${icon("trash")}</button>`}
       </div>
-      <table class="slots">
-        <thead><tr><th>Exercise</th><th>Sets</th><th>Reps</th><th>+%</th><th></th></tr></thead>
-        <tbody>
-          ${(() => {
-            let prevGroup = null;
-            const rows = [];
-            sortedExercises.forEach((slot) => {
-              const group = getExerciseMuscleGroup(slot.exerciseId);
-              if (prevGroup !== null && group !== prevGroup) {
-                rows.push(`<tr class="group-divider-row"><td colspan="5"><div class="muscle-divider-line"></div></td></tr>`);
-              }
-              prevGroup = group;
-              rows.push(renderSlotRow(day, slot));
-            });
-            return rows.join("");
-          })()}
-        </tbody>
-      </table>
+      ${sortedExercises.map((slot) => {
+        const group = getExerciseMuscleGroup(slot.exerciseId);
+        const groupStart = prevGroup !== null && group !== prevGroup;
+        prevGroup = group;
+        return renderSlotRow(day, slot, groupStart);
+      }).join("")}
       ${addExOpen
         ? renderAddSlotForm(day)
-        : `<button class="btn small" data-action="open-add-slot" data-day="${day.id}">+ Add Exercise</button>`}
+        : `<button class="btn small ghost" data-action="open-add-slot" data-day="${day.id}">${icon("plus")} Add exercise</button>`}
     </div>
   `;
 }
 
-export function renderSlotRow(day, slot) {
+export function renderSlotRow(day, slot, groupStart) {
   const exercise = Store.getExercises().find((e) => e.id === slot.exerciseId);
-  return `<tr data-slot="${slot.id}" data-day="${day.id}">
-    <td>
-      ${renderMuscleTag((exercise && exercise.muscleGroup) || "Other")}
-      <div>${escapeHtml(exercise ? exercise.name : "(unknown)")}</div>
-    </td>
-    <td><input type="number" min="1" value="${slot.targetSets}" data-role="slot-sets" data-day="${day.id}" data-slot="${slot.id}"></td>
-    <td>
-      <input type="number" min="1" value="${slot.repRangeMin}" class="rep-input" data-role="slot-rep-min" data-day="${day.id}" data-slot="${slot.id}">-
-      <input type="number" min="1" value="${slot.repRangeMax}" class="rep-input" data-role="slot-rep-max" data-day="${day.id}" data-slot="${slot.id}">
-    </td>
-    <td><input type="number" step="0.5" value="${slot.weightIncrementPct ?? DEFAULT_INCREMENT_PCT}" class="rep-input" data-role="slot-increment" data-day="${day.id}" data-slot="${slot.id}"></td>
-    <td>
-      <div class="slot-actions">
-        <span class="slot-reorder">
-          <button data-action="move-slot-up" data-day="${day.id}" data-slot="${slot.id}">▲</button>
-          <button data-action="move-slot-down" data-day="${day.id}" data-slot="${slot.id}">▼</button>
-        </span>
-        <button class="btn-danger" data-action="remove-slot" data-day="${day.id}" data-slot="${slot.id}">✕</button>
+  const attrs = `data-day="${day.id}" data-slot="${slot.id}"`;
+  return `<div class="slot-row ${groupStart ? "group-start" : ""}" ${attrs}>
+    <div class="slot-top">
+      <div class="slot-name">
+        ${renderMuscleTag((exercise && exercise.muscleGroup) || "Other")}
+        <span>${escapeHtml(exercise ? exercise.name : "(unknown)")}</span>
       </div>
-    </td>
-  </tr>`;
+      <div class="slot-actions">
+        <button class="icon-btn" data-action="move-slot-up" ${attrs} aria-label="Move up">${icon("up")}</button>
+        <button class="icon-btn" data-action="move-slot-down" ${attrs} aria-label="Move down">${icon("down")}</button>
+        <button class="icon-btn" data-action="remove-slot" ${attrs} aria-label="Remove exercise">${icon("trash")}</button>
+      </div>
+    </div>
+    <div class="slot-fields">
+      <label>Sets <input type="number" inputmode="numeric" min="1" value="${slot.targetSets}" data-role="slot-sets" ${attrs}></label>
+      <label>Rep range
+        <span class="rep-pair">
+          <input type="number" inputmode="numeric" min="1" value="${slot.repRangeMin}" data-role="slot-rep-min" ${attrs} aria-label="Rep range minimum">–
+          <input type="number" inputmode="numeric" min="1" value="${slot.repRangeMax}" data-role="slot-rep-max" ${attrs} aria-label="Rep range maximum">
+        </span>
+      </label>
+      <label>+ % <input type="number" inputmode="decimal" step="0.5" value="${slot.weightIncrementPct ?? DEFAULT_INCREMENT_PCT}" data-role="slot-increment" ${attrs}></label>
+    </div>
+  </div>`;
 }
 
 export function renderAddSlotForm(day) {
@@ -116,8 +109,8 @@ export function renderAddSlotForm(day) {
       <label>+% <input type="number" step="0.5" data-role="new-slot-increment" data-day="${day.id}" value="${DEFAULT_INCREMENT_PCT}"></label>
     </div>
     <div class="form-actions">
-      <button data-action="confirm-add-slot" data-day="${day.id}">Add</button>
-      <button data-action="cancel-add-slot" data-day="${day.id}">Cancel</button>
+      <button class="btn small primary" data-action="confirm-add-slot" data-day="${day.id}">Add</button>
+      <button class="btn small ghost" data-action="cancel-add-slot" data-day="${day.id}">Cancel</button>
     </div>
   </div>`;
 }
@@ -188,7 +181,7 @@ export function handleProgramChange(target) {
     : field === "repRangeMax" && slot && value < slot.repRangeMin ? ["repRangeMin", "slot-rep-min"] : null;
   if (other) {
     updates[other[0]] = value;
-    const otherInput = target.closest("tr").querySelector(`input[data-role="${other[1]}"]`);
+    const otherInput = target.closest(".slot-row").querySelector(`input[data-role="${other[1]}"]`);
     if (otherInput) otherInput.value = value;
   }
   Store.updateExerciseSlot(meso.id, dayId, slotId, updates);
