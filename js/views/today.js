@@ -1,7 +1,7 @@
 import { Store, cleanCount, cleanPct, uid } from "../store.js";
 import { WEEKDAY_LABELS, addDays, daysBetween, formatDay, formatShortDate, isoDate, jsDateToWeekdayIndex, parseLocalDate, resolveDayForDate } from "../schedule.js";
 import { DEFAULT_INCREMENT_PCT, blankSet, buildPrefilledSets, equivalentReps, isCompleteSet } from "../progression.js";
-import { App, cssEscape, emptyMesoState, escapeHtml, fmtNum, getExerciseMuscleGroup, icon, pageHeader, renderCurrentView, renderExerciseOptionsGrouped, renderFormError, renderMuscleGroupSelect, renderMuscleTag } from "../ui.js";
+import { App, cssEscape, emptyMesoState, escapeHtml, fmtNum, getExerciseMuscleGroup, icon, pageHeader, plural, renderCurrentView, renderExerciseOptionsGrouped, renderFormError, renderMuscleGroupSelect, renderMuscleTag } from "../ui.js";
 import { getExerciseHistory, getTodayContext, isTouchedSet } from "../workout.js";
 import { renderLineChart } from "../chart.js";
 
@@ -31,8 +31,9 @@ export function renderDateNav(meso, dateIso, isToday, title) {
     .forEach((w) => { workoutsByDate[w.date] = w; });
   // Nothing stops the program at numWeeks, so past the plan it is just "Week n".
   const week = Math.floor(daysBetween(parseLocalDate(meso.startDate), date) / 7) + 1;
-  const weekText = dateIso < meso.startDate ? "" : week <= meso.numWeeks ? ` · Week ${week} of ${meso.numWeeks}` : ` · Week ${week}`;
-  const subtitle = `${WEEKDAY_LABELS[jsDateToWeekdayIndex(date)]}, ${formatShortDate(dateIso)}${weekText}`;
+  const weekText = dateIso < meso.startDate ? "" : week <= meso.numWeeks ? `Week ${week} of ${meso.numWeeks}` : `Week ${week}`;
+  // Short weekday: the line has to fit beside the Today button.
+  const subtitle = [formatDay(dateIso), weekText];
 
   const days = Array.from({ length: 7 }, (_, i) => {
     const d = addDays(monday, i);
@@ -169,12 +170,14 @@ export function renderToday(container) {
   const notices = renderNotices(meso, dayTemplate, workout, dateIso, isToday);
 
   if (!dayTemplate && !workout) {
+    const noDays = meso.days.length === 0;
     container.innerHTML = `
-      ${renderDateNav(meso, dateIso, isToday, "Rest day")}
+      ${renderDateNav(meso, dateIso, isToday, noDays ? meso.name : "Rest day")}
       ${notices}
       <div class="empty-state">
-        <h2>Nothing scheduled</h2>
-        <p class="muted">${dateIso < meso.startDate ? "This is before the mesocycle starts." : "Rest and recover."}</p>
+        <h2>${noDays ? "No training days yet" : "Nothing scheduled"}</h2>
+        <p class="muted">${noDays ? "Add the days you train and their exercises." : dateIso < meso.startDate ? "This is before the mesocycle starts." : "Rest and recover."}</p>
+        ${noDays ? `<a href="#/program" class="btn primary">Set up in Program</a>` : ""}
       </div>`;
     return;
   }
@@ -207,7 +210,7 @@ export function renderToday(container) {
     ${notices}
     <div class="progress-card ${workout.finished ? "finished" : ""}">
       <div class="progress-text">
-        <span class="progress-count"><strong>${doneSets}</strong> / ${allSets.length} sets</span>
+        <span class="progress-count"><strong>${doneSets}</strong> / ${plural(allSets.length, "set")}</span>
         <span class="status-pill">${workout.finished ? "Finished" : doneSets > 0 ? "In progress" : "Not started"}</span>
       </div>
       <div class="progress-track"><div class="progress-fill" style="width:${allSets.length ? (100 * doneSets) / allSets.length : 0}%"></div></div>
@@ -380,7 +383,7 @@ export function renderAddExerciseForm() {
       ${renderExerciseOptionsGrouped(null)}
     </select>
     <input type="text" data-role="add-new-name" placeholder="or name a new exercise" aria-label="New exercise name">
-    ${renderMuscleGroupSelect("add-new-group")}
+    <label>Muscle group of a new exercise ${renderMuscleGroupSelect("add-new-group")}</label>
     <div class="form-row">
       <label>Sets <input type="number" inputmode="numeric" data-role="add-sets" value="2" min="1"></label>
       <label>Rep min <input type="number" inputmode="numeric" data-role="add-rep-min" value="5" min="1"></label>

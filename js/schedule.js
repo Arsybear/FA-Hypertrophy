@@ -26,6 +26,14 @@ export function parseLocalDate(isoDateStr) {
   return new Date(y, m - 1, d);
 }
 
+// A real calendar date written the way the app writes one: zero-padded
+// "YYYY-MM-DD" with a four-digit year. A date input accepts years up to
+// 275760, which Date cannot hold as a local date (Invalid Date breaks every
+// screen that shows it), and years below 100, which Date reads as 19xx.
+export function isIsoDate(s) {
+  return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s) && isoDate(parseLocalDate(s)) === s;
+}
+
 export function addDays(date, n) {
   const d = toDateOnly(date);
   d.setDate(d.getDate() + n);

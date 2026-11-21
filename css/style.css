@@ -129,6 +129,9 @@ h3 {
 .notice a { color: var(--accent-soft); }
 .notice.error { border-left-color: var(--danger); }
 .icon { width: 20px; height: 20px; flex: none; }
+/* A meta line's parts ("6 weeks · starts Mon, Nov 2") wrap between parts,
+   never inside one. */
+.nowrap { white-space: nowrap; }
 
 /* ---------- page header ---------- */
 .page-header { display: flex; align-items: center; gap: 12px; margin-bottom: 16px; }
@@ -221,15 +224,17 @@ input, select {
   border-radius: var(--radius-sm);
   padding: 9px 10px;
   width: 100%;
-  min-height: 40px;
+  min-height: var(--tap);
 }
 input:focus, select:focus { outline: none; border-color: var(--accent-soft); }
 input:disabled, select:disabled { opacity: 0.6; }
 input::placeholder { color: var(--muted); opacity: 0.75; }
 input[type="number"] { font-variant-numeric: tabular-nums; -moz-appearance: textfield; }
 input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; }
-input[type="radio"] { width: auto; min-height: 0; margin: 0 6px 0 0; accent-color: var(--accent); }
+input[type="radio"] { width: 20px; height: 20px; min-height: 0; margin: 0; flex: none; accent-color: var(--accent); }
 label { display: block; margin-bottom: 10px; font-size: 13px; color: var(--muted); }
+/* A radio choice is one full-width row, tall enough to hit mid-set. */
+label:has(> input[type="radio"]) { display: flex; align-items: center; gap: 10px; min-height: var(--tap); margin: 0; font-size: 14px; }
 label input, label select { margin-top: 4px; }
 
 .inline-form {
@@ -244,7 +249,7 @@ label input, label select { margin-top: 4px; }
 .inline-form label { color: var(--text); }
 .form-title { font-weight: 700; }
 .form-row { display: flex; gap: 8px; margin: 8px 0; }
-.form-row label { flex: 1; min-width: 0; color: var(--muted); }
+.form-row label { flex: 1; min-width: 0; margin: 0; color: var(--muted); }
 .form-actions { display: flex; gap: 8px; margin-top: 10px; }
 
 /* ---------- today: week strip + calendar ---------- */
@@ -304,6 +309,7 @@ label input, label select { margin-top: 4px; }
   display: flex;
   flex-direction: column;
   align-items: center;
+  min-height: var(--tap);
   gap: 3px;
   padding: 7px 0 6px;
   border-radius: 10px;
@@ -391,6 +397,8 @@ label input, label select { margin-top: 4px; }
   font-weight: 700;
 }
 .set-row input[type="number"] { text-align: center; font-size: 17px; font-weight: 700; min-height: var(--tap); }
+/* A prediction is lighter than an entered number, so a glance tells them apart. */
+.set-row input::placeholder { font-weight: 500; }
 .set-row.done input[type="number"] { opacity: 1; background: transparent; border-color: transparent; color: var(--success); }
 .set-row.done .set-num { background: var(--success); color: var(--bg); }
 
@@ -414,6 +422,14 @@ label input, label select { margin-top: 4px; }
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230b0d10' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12 5 5 9-10'/%3E%3C/svg%3E");
 }
 .set-check:disabled { opacity: 0.7; cursor: default; }
+/* A finished workout is read-only: its ticks drop the filled circle and
+   read as a record, not a control. */
+.set-check:checked:disabled {
+  opacity: 1;
+  border-color: transparent;
+  background-color: transparent;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%233ecf8e' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12 5 5 9-10'/%3E%3C/svg%3E");
+}
 
 .exercise.complete { border-color: color-mix(in srgb, var(--success) 45%, var(--border)); }
 
@@ -436,7 +452,10 @@ label input, label select { margin-top: 4px; }
 .slot-top { display: flex; align-items: flex-start; gap: 8px; }
 .slot-name { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-weight: 700; overflow-wrap: anywhere; }
 .slot-actions { display: flex; flex: none; align-items: center; gap: 2px; margin: -8px -8px 0 0; }
-.slot-actions .btn { margin: 8px 0 0 6px; }
+.slot-actions .btn { margin-left: 6px; }
+/* The negative margin lets icon buttons bleed into the padding; the
+   confirm buttons are boxed and must stay inside it. */
+.slot-actions:has(.btn) { margin: 0; }
 .slot-fields { display: grid; grid-template-columns: 1fr 2fr 1fr; gap: 8px; margin-top: 8px; }
 .slot-fields label { margin: 0; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
 .slot-fields input { text-align: center; padding: 8px 4px; }
@@ -470,6 +489,7 @@ label input, label select { margin-top: 4px; }
 .date-badge .mon { display: block; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; color: var(--muted); }
 .history-entry-titles { flex: 1; min-width: 0; }
 .history-entry-titles strong { display: block; font-size: 16px; overflow-wrap: anywhere; }
+.history-entry-titles .muted { display: block; }
 .history-detail { padding: 4px 14px 12px; border-top: 1px solid var(--border); }
 .history-exercise { padding: 10px 0 2px; }
 .history-exercise > span:first-child { display: flex; flex-direction: column; gap: 2px; margin-bottom: 6px; }
@@ -549,6 +569,16 @@ label input, label select { margin-top: 4px; }
 .active-meso { border-color: var(--accent); }
 .update-banner { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; border-color: var(--accent); }
 .about { text-align: center; margin-top: 24px; }
+.card > .btn.wide { margin-top: 12px; }
+
+/* One card holding a list of rows split by hairlines (exercise library). */
+.list-card { padding-top: 4px; padding-bottom: 4px; }
+.list-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 56px; padding: 6px 0; border-top: 1px solid var(--border); }
+.list-row:first-child { border-top: none; }
+.list-row > div:first-child { min-width: 0; display: flex; flex-direction: column; gap: 2px; overflow-wrap: anywhere; }
+.list-row .icon-btn { margin-right: -8px; }
+.list-row .form-actions { margin: 0; flex: none; }
+.list-row > .muted { flex: none; }
 
 /* ---------- bottom nav ---------- */
 .bottom-nav {

@@ -1,4 +1,4 @@
-import { isoDate, parseLocalDate } from "./schedule.js";
+import { isIsoDate, isoDate, parseLocalDate } from "./schedule.js";
 
 // localStorage-backed data access for FA-Hypertrophy.
 // Keys: fah_exercises, fah_mesocycles, fah_workouts
@@ -55,6 +55,15 @@ export function cleanPct(v) {
   return Math.min(50, Math.max(0, Number(v) || 0));
 }
 
+// A set value as typed on Today: weight 0 (bodyweight) to 2000 lb, reps a
+// whole number 0 to 999. Anything else (text, negative, 7.5 reps, 1e20) is
+// refused as blank: it would be saved as history and drive the predictions.
+export function cleanSetValue(field, raw) {
+  const n = String(raw).trim() === "" ? NaN : Number(raw);
+  if (field === "reps") return Number.isInteger(n) && n >= 0 && n <= 999 ? n : null;
+  return n >= 0 && n <= 2000 ? n : null;
+}
+
 // Brings every number a mesocycle is built from into the range the forms
 // allow. Data saved by older versions (which did not clamp) and imported
 // backups both go through this, so the rest of the app can rely on it.
@@ -66,6 +75,11 @@ export function normalizeMesocycles(list) {
   };
   for (const meso of list) {
     set(meso, "numWeeks", cleanCount(meso.numWeeks));
+    // A start date Date cannot hold (a date input takes years up to 275760)
+    // blanks every screen that shows it, with no way back in the app.
+    if (typeof meso.startDate !== "string" || Number.isNaN(parseLocalDate(meso.startDate).getTime())) {
+      set(meso, "startDate", isoDate(new Date()));
+    }
     for (const day of meso.days || []) {
       for (const slot of day.exercises || []) {
         set(slot, "targetSets", cleanCount(slot.targetSets));
@@ -122,7 +136,7 @@ export const Store = {
       id: uid(),
       name,
       numWeeks,
-      startDate,
+      startDate: isIsoDate(startDate) ? startDate : isoDate(new Date()),
       active: list.length === 0, // first mesocycle auto-activates; later ones don't
       days: [],
     };
@@ -139,7 +153,9 @@ export const Store = {
     const list = Store.getMesocycles();
     const meso = list.find((m) => m.id === mesoId);
     if (!meso) return null;
-    Object.assign(meso, updates);
+    // An unusable start date is ignored, like an empty one (see isIsoDate).
+    const { startDate, ...rest } = updates;
+    Object.assign(meso, rest, isIsoDate(startDate) ? { startDate } : {});
     Store.saveMesocycles(list);
     return meso;
   },
@@ -330,12 +346,14 @@ const BACKUP_APP = "fa-hypertrophy";
 export function validateBackup(data) {
   const isObj = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
   const id = (v) => typeof v === "string" && /^[A-Za-z0-9_-]{1,64}$/.test(v);
-  const str = (v) => typeof v === "string" && v.length <= 200;
+  // Names are escaped wherever they are shown, and the forms never limited
+  // their length, so any length the app could have saved must restore.
+  const str = (v) => typeof v === "string";
   const num = (v) => typeof v === "number" && Number.isFinite(v);
   const optNum = (v) => v == null || num(v);
   const optBool = (v) => v == null || typeof v === "boolean";
   const optOffset = (v) => v == null || (Number.isInteger(v) && v >= 0 && v <= 6);
-  const date = (v) => typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v) && isoDate(parseLocalDate(v)) === v;
+  const date = isIsoDate;
   const all = (list, test) => Array.isArray(list) && list.every((item) => isObj(item) && test(item));
 
   if (!isObj(data) || data.app !== BACKUP_APP) return "This is not an FA Hypertrophy backup file.";

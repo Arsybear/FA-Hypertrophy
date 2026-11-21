@@ -93,10 +93,12 @@ export function isCompleteSet(s) {
 // slots. The name fallback covers entries whose exerciseId is missing or
 // stale (exercise removed from the library and re-created) — library names
 // are unique (Store.addExercise), so a name match is the same exercise.
+// With no exerciseId to look for, only the name can match: a missing id
+// would otherwise equal every other entry's missing id.
 export function exerciseMatchers(slotId, exerciseId, exerciseName) {
   return [
-    (e) => e.exerciseId === exerciseId && e.slotId === slotId,
-    (e) => e.exerciseId === exerciseId,
+    (e) => exerciseId != null && e.exerciseId === exerciseId && e.slotId === slotId,
+    (e) => exerciseId != null && e.exerciseId === exerciseId,
     (e) => exerciseName != null && e.exerciseName === exerciseName,
   ];
 }

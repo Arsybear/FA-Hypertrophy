@@ -1,5 +1,5 @@
 import { Store } from "./store.js";
-import { isoDate, parseLocalDate, resolveDayForDate } from "./schedule.js";
+import { isIsoDate, isoDate, parseLocalDate, resolveDayForDate } from "./schedule.js";
 import { DEFAULT_INCREMENT_PCT, blankSet, buildPrefilledSets, exerciseMatchers, findMatchingExercise } from "./progression.js";
 
 export function generateWorkout(meso, dayTemplate, dateIso) {
@@ -127,7 +127,7 @@ export function migrateLegacyPrefill(workout) {
 export function currentDateParam() {
   const q = location.hash.split("?")[1];
   const d = q ? new URLSearchParams(q).get("date") : null;
-  return d && /^\d{4}-\d{2}-\d{2}$/.test(d) && isoDate(parseLocalDate(d)) === d ? d : null;
+  return isIsoDate(d) ? d : null;
 }
 
 export function isTouchedSet(s) {

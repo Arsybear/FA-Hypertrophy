@@ -87,14 +87,22 @@ export function renderFormError() {
   return App.ui.formError ? `<p class="warn-text" role="alert">${escapeHtml(App.ui.formError)}</p>` : "";
 }
 
-// Top of every screen: the mark, a title, an optional line under it and an
-// optional control on the right (already-rendered HTML).
+// "6 weeks · starts Mon, Nov 2" from its parts (plain text, escaped here).
+// A line too long for the screen wraps between parts, never inside one.
+export function metaLine(parts) {
+  return parts.filter(Boolean).map((p) => `<span class="nowrap">${escapeHtml(p)}</span>`).join(" · ");
+}
+
+// Top of every screen: the mark, a title, an optional line under it (text,
+// or an array of parts for metaLine) and an optional control on the right
+// (already-rendered HTML).
 export function pageHeader(title, subtitle = "", right = "") {
+  const sub = Array.isArray(subtitle) ? metaLine(subtitle) : escapeHtml(subtitle);
   return `<header class="page-header">
     <img class="page-mark" src="icons/mark.svg" alt="">
     <div class="page-titles">
       <h1>${escapeHtml(title)}</h1>
-      ${subtitle ? `<p class="muted">${escapeHtml(subtitle)}</p>` : ""}
+      ${sub ? `<p class="muted">${sub}</p>` : ""}
     </div>
     ${right}
   </header>`;

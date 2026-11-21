@@ -11,7 +11,7 @@ export function renderProgram(container) {
   const availableOffsets = [0, 1, 2, 3, 4, 5, 6].filter((i) => !usedOffsets.has(i));
 
   container.innerHTML = `
-    ${pageHeader(meso.name, `${plural(meso.numWeeks, "week")} · starts ${formatDay(meso.startDate)}`)}
+    ${pageHeader(meso.name, [plural(meso.numWeeks, "week"), `starts ${formatDay(meso.startDate)}`])}
     ${sortedDays.length === 0 ? `<p class="muted intro">Add the days you train. Each day holds its exercises and repeats every week.</p>` : ""}
     ${sortedDays.map((day) => renderDayCard(meso, day)).join("")}
     <div class="add-exercise-area">
@@ -110,7 +110,7 @@ export function renderAddSlotForm(day) {
       ${renderExerciseOptionsGrouped(null)}
     </select>
     <input type="text" data-role="new-slot-name" ${attrs} placeholder="or name a new exercise" aria-label="New exercise name">
-    ${renderMuscleGroupSelect("new-slot-group", attrs)}
+    <label>Muscle group of a new exercise ${renderMuscleGroupSelect("new-slot-group", attrs)}</label>
     <div class="form-row">
       <label>Sets <input type="number" inputmode="numeric" data-role="new-slot-sets" ${attrs} value="2" min="1"></label>
       <label>Rep min <input type="number" inputmode="numeric" data-role="new-slot-rep-min" ${attrs} value="5" min="1"></label>

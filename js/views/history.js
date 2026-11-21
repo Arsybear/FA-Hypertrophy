@@ -1,7 +1,7 @@
 import { Store } from "../store.js";
 import { MONTHS_SHORT } from "../schedule.js";
 import { isCompleteSet } from "../progression.js";
-import { App, escapeHtml, getExerciseMuscleGroup, icon, pageHeader, plural, renderCurrentView, renderMuscleTag } from "../ui.js";
+import { App, escapeHtml, getExerciseMuscleGroup, icon, metaLine, pageHeader, plural, renderCurrentView, renderMuscleTag } from "../ui.js";
 
 export function renderHistory(container) {
   const workouts = Store.getWorkouts()
@@ -28,7 +28,8 @@ export function renderHistory(container) {
           <span class="date-badge"><span class="day">${day}</span><span class="mon">${MONTHS_SHORT[month - 1]}</span></span>
           <span class="history-entry-titles">
             <strong>${escapeHtml(w.dayName)}</strong>
-            <span class="muted">${year}${meso ? ` · ${escapeHtml(meso.name)}` : ""} · ${plural(w.exercises.length, "exercise")} · ${plural(setCount, "set")}</span>
+            <span class="muted">${metaLine([plural(w.exercises.length, "exercise"), plural(setCount, "set")])}</span>
+            <span class="muted">${metaLine([meso && meso.name, String(year)])}</span>
           </span>
           ${icon(open ? "up" : "down")}
         </button>

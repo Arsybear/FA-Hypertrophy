@@ -1,11 +1,11 @@
 import { APP_VERSION } from "../version.js";
 import { Store, cleanCount, validateBackup } from "../store.js";
 import { WEEKDAY_LABELS, formatDay, isoDate, jsDateToWeekdayIndex, mesocycleStartWeekday, parseLocalDate } from "../schedule.js";
-import { App, escapeHtml, icon, pageHeader, plural, renderCurrentView, renderMuscleTag } from "../ui.js";
+import { App, escapeHtml, icon, metaLine, pageHeader, plural, renderCurrentView, renderMuscleTag } from "../ui.js";
 
-// One line under a mesocycle's name in the list.
+// One line under a mesocycle's name in the list (HTML, see metaLine).
 function mesoSummary(m) {
-  return `${plural(m.numWeeks, "week")} · starts ${formatDay(m.startDate)}`;
+  return metaLine([plural(m.numWeeks, "week"), `starts ${formatDay(m.startDate)}`]);
 }
 
 export function renderSettings(container) {
@@ -42,7 +42,7 @@ export function renderSettings(container) {
     `}
 
     ${active ? `
-      <h3 data-role="edit-heading">Edit "${escapeHtml(active.name)}"</h3>
+      <h3>Edit active mesocycle</h3>
       <div class="card">
         <label>Name <input type="text" data-role="edit-name" value="${escapeHtml(active.name)}"></label>
         <label>Weeks <input type="number" inputmode="numeric" min="1" max="99" data-role="edit-weeks" value="${active.numWeeks}"></label>
@@ -82,9 +82,9 @@ export function renderSettings(container) {
 
     <h3>Exercise library</h3>
     ${exercises.length === 0 ? `<p class="muted">No exercises yet.</p>` : `
-      <div class="meso-list">
+      <div class="card list-card">
         ${exercises.map((ex) => `
-          <div class="card meso-item">
+          <div class="list-row">
             <div>
               ${renderMuscleTag(ex.muscleGroup || "Other")}
               <strong>${escapeHtml(ex.name)}</strong>
@@ -209,14 +209,12 @@ export function handleSettingsChange(target) {
   }
   // No renderCurrentView(): avoid stealing focus mid-edit (see
   // handleTodayChange). Patch what shows the edited values in place: the
-  // mesocycle's line in the list, its Copy button's label and the heading.
+  // mesocycle's line in the list and its Copy button's label.
   const updated = Store.getActiveMesocycle();
   const item = document.querySelector(".meso-item.active-meso");
   if (item) {
     item.querySelector("strong").textContent = updated.name;
-    item.querySelector(".muted").textContent = mesoSummary(updated);
+    item.querySelector(".muted").innerHTML = mesoSummary(updated);
     item.querySelector('[data-action="copy-meso"]').setAttribute("aria-label", `Copy ${updated.name}`);
   }
-  const heading = document.querySelector('[data-role="edit-heading"]');
-  if (heading) heading.textContent = `Edit "${updated.name}"`;
 }
