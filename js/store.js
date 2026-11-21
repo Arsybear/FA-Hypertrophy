@@ -1,17 +1,17 @@
 // localStorage-backed data access for FA-Hypertrophy.
 // Keys: fah_exercises, fah_mesocycles, fah_workouts
 
-const KEYS = {
+export const KEYS = {
   exercises: "fah_exercises",
   mesocycles: "fah_mesocycles",
   workouts: "fah_workouts",
 };
 
-function uid() {
+export function uid() {
   return crypto.randomUUID();
 }
 
-function readJSON(key, fallback) {
+export function readJSON(key, fallback) {
   const raw = localStorage.getItem(key);
   if (!raw) return fallback;
   try {
@@ -28,11 +28,11 @@ function readJSON(key, fallback) {
   return fallback;
 }
 
-function writeJSON(key, value) {
+export function writeJSON(key, value) {
   localStorage.setItem(key, JSON.stringify(value));
 }
 
-const Store = {
+export const Store = {
   // --- Exercise library ---
   getExercises() {
     return readJSON(KEYS.exercises, []);

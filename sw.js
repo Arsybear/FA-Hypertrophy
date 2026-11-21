@@ -1,12 +1,18 @@
-const CACHE_NAME = "fa-hypertrophy-v24";
+const CACHE_NAME = "fa-hypertrophy-v25";
 const ASSETS = [
   "./",
   "index.html",
   "css/style.css",
-  "js/storage.js",
+  "js/main.js",
+  "js/store.js",
   "js/schedule.js",
   "js/progression.js",
-  "js/app.js",
+  "js/ui.js",
+  "js/workout.js",
+  "js/views/today.js",
+  "js/views/program.js",
+  "js/views/history.js",
+  "js/views/settings.js",
   "manifest.json",
   "icons/icon-192.png",
   "icons/icon-512.png",

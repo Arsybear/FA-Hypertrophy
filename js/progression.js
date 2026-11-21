@@ -1,13 +1,15 @@
-const DEFAULT_INCREMENT_PCT = 2.5;
-const PLATE_INCREMENT = 2.5;
-const LIGHT_WEIGHT_THRESHOLD = 45; // below this: light (rep-first)
-const HEAVY_WEIGHT_THRESHOLD = 135; // at/above this: heavy (weight-first)
+import { Store } from "./store.js";
 
-function roundToPlate(n) {
+export const DEFAULT_INCREMENT_PCT = 2.5;
+export const PLATE_INCREMENT = 2.5;
+export const LIGHT_WEIGHT_THRESHOLD = 45; // below this: light (rep-first)
+export const HEAVY_WEIGHT_THRESHOLD = 135; // at/above this: heavy (weight-first)
+
+export function roundToPlate(n) {
   return Math.round(n / PLATE_INCREMENT) * PLATE_INCREMENT;
 }
 
-function weightClass(weight) {
+export function weightClass(weight) {
   if (weight < LIGHT_WEIGHT_THRESHOLD) return "light";
   if (weight >= HEAVY_WEIGHT_THRESHOLD) return "heavy";
   return "medium";
@@ -18,7 +20,7 @@ function weightClass(weight) {
 // a heavy weight is disproportionately harder than at a light one, so a
 // smaller, more frequent weight bump is the smoother progression. Light
 // and medium exercises keep the classic full-climb trigger.
-function weightBumpTriggerReps(cls, repRangeMin, repRangeMax) {
+export function weightBumpTriggerReps(cls, repRangeMin, repRangeMax) {
   if (cls === "heavy") {
     return repRangeMin + Math.ceil((repRangeMax - repRangeMin) / 2);
   }
@@ -33,10 +35,10 @@ function weightBumpTriggerReps(cls, repRangeMin, repRangeMax) {
 // 2.5%). Medium interpolates linearly by weight so exercises either side of
 // a threshold don't behave wildly differently — that band is a guess, not
 // yet fitted to data.
-const LIGHT_PCT_PER_REP = 15;
-const HEAVY_PCT_PER_REP = 2.5;
+export const LIGHT_PCT_PER_REP = 15;
+export const HEAVY_PCT_PER_REP = 2.5;
 
-function pctPerRep(weight) {
+export function pctPerRep(weight) {
   if (weight <= LIGHT_WEIGHT_THRESHOLD) return LIGHT_PCT_PER_REP;
   if (weight >= HEAVY_WEIGHT_THRESHOLD) return HEAVY_PCT_PER_REP;
   const t = (weight - LIGHT_WEIGHT_THRESHOLD) / (HEAVY_WEIGHT_THRESHOLD - LIGHT_WEIGHT_THRESHOLD);
@@ -46,7 +48,7 @@ function pctPerRep(weight) {
 // Estimate the rep target at newWeight relative to the (baseWeight,
 // baseReps) anchor: one rep lost (or gained, for a lighter weight) per
 // pctPerRep(baseWeight)% of load change. Callers clamp to the rep range.
-function equivalentReps(baseWeight, baseReps, newWeight) {
+export function equivalentReps(baseWeight, baseReps, newWeight) {
   if (baseWeight == null || baseReps == null || newWeight == null || newWeight <= 0 || baseWeight <= 0) return null;
   const pctChange = (newWeight / baseWeight - 1) * 100;
   return Math.max(1, Math.round(baseReps - pctChange / pctPerRep(baseWeight)));
@@ -65,7 +67,7 @@ function equivalentReps(baseWeight, baseReps, newWeight) {
 // premise behind the percentage is broken and the new prescription reads as
 // an accidental deload (e.g. 95x12 -> 97.5x8 is a much easier set than
 // 95x12, when 97.5x12 is the real next step).
-function nextSet(prevSet, repRangeMin, repRangeMax, weightIncrementPct) {
+export function nextSet(prevSet, repRangeMin, repRangeMax, weightIncrementPct) {
   if (!prevSet || prevSet.reps == null || prevSet.weight == null) return null;
   const cls = weightClass(prevSet.weight);
   const triggerReps = weightBumpTriggerReps(cls, repRangeMin, repRangeMax);
@@ -80,7 +82,7 @@ function nextSet(prevSet, repRangeMin, repRangeMax, weightIncrementPct) {
   return { weight: prevSet.weight, reps: Math.min(prevSet.reps + 1, repRangeMax) };
 }
 
-function isCompleteSet(s) {
+export function isCompleteSet(s) {
   return !!s && s.weight != null && s.reps != null;
 }
 
@@ -91,7 +93,7 @@ function isCompleteSet(s) {
 // slots. The name fallback covers entries whose exerciseId is missing or
 // stale (exercise removed from the library and re-created) — library names
 // are unique (Store.addExercise), so a name match is the same exercise.
-function exerciseMatchers(slotId, exerciseId, exerciseName) {
+export function exerciseMatchers(slotId, exerciseId, exerciseName) {
   return [
     (e) => e.exerciseId === exerciseId && e.slotId === slotId,
     (e) => e.exerciseId === exerciseId,
@@ -99,7 +101,7 @@ function exerciseMatchers(slotId, exerciseId, exerciseName) {
   ];
 }
 
-function findMatchingExercise(workout, matchers) {
+export function findMatchingExercise(workout, matchers) {
   for (const match of matchers) {
     const ex = workout.exercises.find(match);
     if (ex) return ex;
@@ -115,7 +117,7 @@ function findMatchingExercise(workout, matchers) {
 // Looked up per set, not per exercise: a set left blank last time (skipped,
 // since untouched predictions are never saved) falls back to the most
 // recent workout where it was actually logged.
-function findLastLoggedSet(workouts, dayId, slotId, exerciseId, setIndex, beforeIsoDate, exerciseName) {
+export function findLastLoggedSet(workouts, dayId, slotId, exerciseId, setIndex, beforeIsoDate, exerciseName) {
   const candidates = workouts
     .filter((w) => w.finished && w.date < beforeIsoDate)
     .sort((a, b) => (a.date < b.date ? 1 : -1));
@@ -133,14 +135,14 @@ function findLastLoggedSet(workouts, dayId, slotId, exerciseId, setIndex, before
   return null;
 }
 
-function blankSet(setIndex) {
+export function blankSet(setIndex) {
   return { setIndex, weight: null, reps: null, baseWeight: null, baseReps: null, isLogged: false, done: false };
 }
 
 // Build a slot's sets for a new workout. weight/reps stay null — they only
 // ever hold what the user actually typed. The double-progression prediction
 // lives in baseWeight/baseReps and is shown as the inputs' placeholder.
-function buildPrefilledSets(slot, workouts, dayId, beforeIsoDate, exerciseName) {
+export function buildPrefilledSets(slot, workouts, dayId, beforeIsoDate, exerciseName) {
   const sets = [];
   for (let i = 0; i < slot.targetSets; i++) {
     const set = blankSet(i);
