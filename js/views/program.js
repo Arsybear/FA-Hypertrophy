@@ -131,8 +131,8 @@ export function renderAddSlotForm(day) {
 
 // The rest of the explainer: how a rise is made, below the three paces.
 const PRESET_DETAIL = `<div class="preset-detail muted">
-  <p>On lifts where one weight step costs less than a rep (most heavy barbell lifts) that pace is asked as small weight steps at the same reps, so a step comes more often than a rep would. In a week with nothing due the target is last time's set, or the same effort at a heavier weight.</p>
-  <p>Where a weight step costs a rep or more (light dumbbells, big machine steps), the weight goes up near the top of the rep range and the reps drop to match: Light at the top, Moderate just under it, Aggressive from the middle.</p>
+  <p>On lifts where one weight step costs less than a rep (most heavy barbell lifts) the rise is weight steps at the same reps: at least one a week on Moderate and one or two on Aggressive (more where a step is very small for the load), and never more than your reps above the bottom of the range can pay for. While a set sits at the bottom of the range the rise is one rep instead, taken as weight if the first set is already at the top. On Light, a week with nothing due repeats last time's set, except that reps at the top of the range can still move the weight up.</p>
+  <p>Where a weight step costs a rep or more (light dumbbells, big machine steps), the weight goes up near the top of the rep range and the reps drop to match: Light at the top, Moderate just under it, Aggressive from the middle. With a big step the weight waits until the reps left after the jump stay in the range.</p>
   <p>Sets done at the same weight share one target weight, set by your first set. Later sets keep their own reps, adjusted when the weight changes. A set you skipped for a long time gets the weight and no rep target.</p>
   <p>Under the rep range the target is one more rep each session until you are back in it.</p>
   <p>A preset sets how demanding the targets are. How fast you get stronger is still up to you.</p>

@@ -14,11 +14,12 @@ prefill (no RIR tracking, no volume-landmark dashboard).
 - Double-progression predictions: each set shows the next weight and reps to
   beat as a greyed hint, from the last time you logged that exercise. Tick a
   set to log it exactly as predicted.
-- Three progression presets per exercise slot (light, moderate, aggressive)
-  set how fast the targets rise. A minimum weight step per exercise (5 lb
-  dumbbells, 10 lb machine stacks) decides whether a rise is one more rep
-  or a small weight step, and a prediction only asks for a weight your
-  equipment has. Sets done at one weight share one target weight.
+- Three progression presets per exercise slot. On Moderate and Aggressive
+  the target rises every week (Aggressive usually asks more), on Light only
+  in some weeks. A minimum weight step per exercise (5 lb dumbbells, 10 lb machine
+  stacks) decides whether a rise is one more rep or a small weight step,
+  and a prediction only asks for a weight your equipment has. Sets done at
+  one weight share one target weight.
 - Week strip and month calendar of the training block; finish, reopen and
   backfill workouts, also late (a workout left half logged is pointed out
   the next time you open the app).

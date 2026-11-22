@@ -5,6 +5,10 @@ import { Store } from "./store.js";
 // SYSTEM 1, the preset: a demand in rep-equivalents a week, the same at every
 // load. One rep-equivalent = one more rep at the same weight, or the weight
 // that pctPerRep says costs one rep (from 100 lb: 2.5 % of the load).
+// Moderate and Aggressive also ask a least number of units of the lever
+// every week, a weekly gain: Moderate one rep or minimum step, Aggressive one
+// every week and a second in about half the weeks. Light asks only its pace,
+// so some weeks ask nothing more.
 // SYSTEM 2, the lever, set by the load and the equipment only: the demand is
 // asked as weight steps where one step costs under one rep and the logged
 // reps are above the range bottom; otherwise as reps.
@@ -17,14 +21,19 @@ export const MIN_PCT_PER_REP = 2.5; // floor, reached at 100 lb
 export const DEFAULT_MIN_INCREMENT = 2.5;
 export const MAX_CONVERT_REPS = 4; // a fallback converted further than this gets no rep target (the fit covers jumps of 1-2 reps; 4 = the 8-12 width)
 export const DEFAULT_PROGRESSION = "moderate";
-// repsPerWeek: rep-equivalents a week = 0.5 / 1 / 2 % of capacity a week
-// from 100 lb. jumpQuarters: on reps-first lifts, how far below the range top
-// the effort-neutral jump is taken, in quarters of the range width (0 = at
-// the top). Both are the one place to change a preset.
+// repsPerWeek: the pace, in rep-equivalents a week = 0.5 / 1 / 2 % of
+// capacity a week from 100 lb. weeklyUnits: the least asked each week (not
+// the log's own week), in the lever's unit (reps, or minimum steps), as a
+// rate due in whole units like the pace (1.5: one every week and a second
+// in about half the weeks); a weight-first lift asked as reps gets one rep
+// at most (a rep on a heavy lift is the expensive unit). jumpQuarters: on
+// reps-first lifts, how far below the range top the effort-neutral jump is
+// taken, in quarters of the range width (0 = at the top). These are the one
+// place to change a preset.
 export const PRESETS = {
-  light: { repsPerWeek: 0.2, jumpQuarters: 0 }, // long-term intermediate (Human Kinetics: 0.42-0.56 %/wk)
-  moderate: { repsPerWeek: 0.4, jumpQuarters: 1 }, // between that and 8-week studies of trained lifters (1.3-2.1 %/wk)
-  aggressive: { repsPerWeek: 0.8, jumpQuarters: 2 }, // 8-week trained-to-failure rates (Schoenfeld 2016 squat 2.1 %/wk)
+  light: { repsPerWeek: 0.2, weeklyUnits: 0, jumpQuarters: 0 }, // long-term intermediate (Human Kinetics: 0.42-0.56 %/wk)
+  moderate: { repsPerWeek: 0.4, weeklyUnits: 1, jumpQuarters: 1 }, // between that and 8-week studies of trained lifters (1.3-2.1 %/wk)
+  aggressive: { repsPerWeek: 0.8, weeklyUnits: 1.5, jumpQuarters: 2 }, // 8-week trained-to-failure rates (Schoenfeld 2016 squat 2.1 %/wk)
 };
 export const PROGRESSIONS = Object.keys(PRESETS);
 const EPOCH_MONDAY = Date.UTC(1970, 0, 5);
@@ -97,15 +106,25 @@ export function dueUnits(perWeek, week, phase = 0) {
 
 // Double progression with a demand, for one set. Under the range: one more
 // rep at the same weight, every session, whatever the preset (getting back
-// into the range is not paced). Bodyweight: the due reps, no cap. Otherwise
-// the week's due units in the lever's unit:
-//  - weight first: the due steps at the same reps.
+// into the range is not paced). Otherwise the week's due units in the
+// lever's unit, at least the week's floor (dueUnits of weeklyUnits:
+// Moderate 1, Aggressive 1 or 2, Light 0):
+//  - bodyweight: those units as reps, no cap.
+//  - weight first: the due steps at the same reps, but never more steps than
+//    the reps above the range bottom pay for (at least one).
+//  - a weight-first lift with its reps at the range bottom is asked reps; the
+//    floor is then one rep at most (Aggressive's two-unit week too: two reps
+//    there turned into three steps at the top), and below the range top the
+//    reps never pass the top.
 //  - reps first: the due reps; on reps-first lifts from triggerReps (any week)
 //    the weight goes up by the fewest steps that bring the reps back to no
 //    more than the logged reps (at the range top: into the range), at
-//    equivalentReps, so the jump itself asks nothing more. A jump that would
-//    land under the range is not taken: below the top the reps keep rising,
-//    at the top they keep growing past it until a jump lands.
+//    equivalentReps, so the jump itself asks nothing more. Below the top the
+//    jump is taken only where the logged reps, converted to the new weight,
+//    stay in the range (the week's demand must not be what makes it land);
+//    otherwise the reps keep rising, never past the range top. At the top a
+//    jump that would land under the range is not taken: the reps keep growing
+//    past it until a jump lands.
 //  - reps above the range top (overshoot): max(due steps, 1) steps, never
 //    more, reps capped at the range top, so one log never doubles the weight
 //    (20x20 8-12 /2.5 -> 22.5x12). If that step would land under the range,
@@ -131,12 +150,14 @@ function plan(prevSet, repRangeMin, repRangeMax, progression, minIncrement, week
   const { weight, reps } = prevSet;
   if (reps < repRangeMin) return { weight, reps: reps + 1, demand: 0 };
   const perWeek = PRESETS[progression].repsPerWeek;
-  const units = (x) => (logWeek === week ? 0 : dueUnits(x, week, phase));
+  const floor = dueUnits(PRESETS[progression].weeklyUnits, week, phase); // the least asked this week, in the lever's unit
+  const units = (x, least = floor) => (logWeek === week ? 0 : Math.max(least, dueUnits(x, week, phase)));
   if (weight <= 0) { const d = units(perWeek); return { weight, reps: reps + d, demand: d }; }
   const inc = minIncrement || DEFAULT_MIN_INCREMENT;
   const cost = stepCost(weight, inc);
   const byWeight = leverReps > repRangeMin && weightFirst(weight, inc);
-  const due = byWeight ? units(perWeek / cost) : units(perWeek);
+  const room = Math.max(1, Math.floor((leverReps - repRangeMin) / cost + 1e-9)); // steps the reps above the range bottom pay for
+  const due = byWeight ? Math.min(units(perWeek / cost), room) : units(perWeek, weightFirst(weight, inc) ? Math.min(floor, 1) : floor);
   const demand = byWeight ? due * cost : due; // in reps at `weight`
   const at = (j) => ({ weight: Math.round((weight + j * inc) * 1000) / 1000, reps: Math.max(1, Math.round(reps + demand - j * cost)), demand });
   if (reps > repRangeMax) {
@@ -147,9 +168,9 @@ function plan(prevSet, repRangeMin, repRangeMax, progression, minIncrement, week
   if (!weightFirst(weight, inc) && reps >= triggerReps(progression, repRangeMin, repRangeMax) && reps < repRangeMax) { // reps-first lifts only
     let j = 1;
     while (at(j).reps > reps) j++;
-    if (at(j).reps >= repRangeMin) return at(j);
+    if (at(j).reps - demand >= repRangeMin) return at(j); // an early jump only where the logged reps, converted, stay in the range
   }
-  if (reps < repRangeMax) return at(0);
+  if (reps < repRangeMax) { const s = at(0); return { ...s, reps: Math.min(s.reps, repRangeMax) }; } // below the top: never past it
   let j = 1; // at the top
   while (at(j).reps > repRangeMax) j++;
   return at(j).reps >= repRangeMin ? at(j) : at(0);
@@ -171,8 +192,10 @@ export function nextSet(prevSet, repRangeMin, repRangeMax, progression, minIncre
 // it. Every other set of the group takes set 1's weight with the same demand,
 // from its own last reps:
 //  - weight unchanged from the set's own log: under the range +1 (every
-//    session, as for set 1), otherwise reps + demand (0 in a weight-first
-//    week with no step).
+//    session, as for set 1), otherwise reps + demand. The demand is 0 in a
+//    Light week with nothing due, when set 1 is under the range (its +1 is
+//    not a demand: 100x7 + 100x9 in 8-12 gives 100x8, 100x9), and when set
+//    1's log or the set's own log is from the target's week.
 //  - weight changed: reps + demand minus the change in reps at the set's own
 //    logged weight (equivalentReps arithmetic; for a set logged with set 1
 //    this is set 1's own conversion, reps + demand - steps x cost). Shown as

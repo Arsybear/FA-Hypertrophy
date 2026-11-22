@@ -94,8 +94,8 @@ export function renderProgressionSelect(dataRole, dataAttrs = "", selected = DEF
 // lifts get as small weight steps (see nextSet in progression.js).
 export const PRESET_HELP = `<ul class="preset-help muted">
   <li>Light: one more rep about every five weeks, or its worth in weight. A pace you can keep for years.</li>
-  <li>Moderate: one more rep every two to three weeks, or its worth in weight. The average pace of a trained lifter.</li>
-  <li>Aggressive: four more reps about every five weeks, or their worth in weight. Expect more missed targets.</li>
+  <li>Moderate: one more rep every week, or at least one small weight step on heavy lifts. Missing a week is normal.</li>
+  <li>Aggressive: one or two more reps every week, or one or more weight steps on heavy lifts. Expect misses.</li>
 </ul>`;
 
 // The "Min step (lb)" box: the library exercise's minIncrement, one value

@@ -440,47 +440,82 @@ unticked set is complete and needs no question).
 Two separate systems, by the user's design ("system 1 is essentially the
 user setting how aggressively they want to and think they could progress.
 Moderate being average"; the second exists because "increasing a rep at 230
-is much harder than increasing a rep at 10 pounds"):
+is much harder than increasing a rep at 10 pounds"). Since version 36
+system 1 also has a weekly minimum, again the user's rule: "Light case is
+the only one that doesn't have to have progression every week. It is fine
+if in reality the user doesn't hit the targets every week but the target in
+moderate and aggressive cases should be a weekly gain."
 
-1. **The preset is a pace.** It sets how much is asked per week, in
-   rep-equivalents (one more rep at the same weight, or the weight that
-   costs one rep), the same at every load: Light 0.2, Moderate 0.4 (the
-   default), Aggressive 0.8 (`PRESETS[p].repsPerWeek`; from 100 lb up that
-   is about 0.5 / 1 / 2 % of the load a week). A fraction of a rep cannot
-   be asked in one session, so whole units fall due in some calendar weeks:
-   `dueUnits(perWeek, week, phase)` is `floor(perWeek + u)`, `u` a
-   golden-ratio sequence over the weeks shifted by the exercise's phase.
+1. **The preset is a pace with a weekly minimum**: two numbers per preset
+   in `PRESETS`, and what is asked is the larger of the two.
+   - `repsPerWeek` is the pace in rep-equivalents (one more rep at the same
+     weight, or the weight that costs one rep), the same at every load:
+     Light 0.2, Moderate 0.4 (the default), Aggressive 0.8 (from 100 lb up
+     that is about 0.5 / 1 / 2 % of the load a week). A fraction of a rep
+     cannot be asked in one session, so whole units fall due in some
+     calendar weeks: `dueUnits(perWeek, week, phase)` is
+     `floor(perWeek + u)`, `u` a golden-ratio sequence over the weeks
+     shifted by the exercise's phase.
+   - `weeklyUnits` is the least asked in a week, in the unit of the lever
+     the lift uses (a rep on a reps-first lift, one minimum step on a
+     weight-first lift, see 2): Light 0, Moderate 1, Aggressive 1.5. It
+     goes through `dueUnits` as well, so 1.5 is one unit every week and a
+     second in about half the weeks (1, 2, 1, 2, 2, 1, ...).
+
+   Light is therefore the pace alone, and exactly version 35's Light: 20x10
+   on a curl rises in one week of five, and a week with nothing due repeats
+   last time's set, except at the range top: there a reps-first lift jumps
+   in any week, and so does a weight-first lift whose weakest set is at the
+   range bottom (Light 405x8 + 405x4 in 4-8 at a 2.5 lb step: 407.5 lb with
+   nothing due). Moderate asks one rep or one step every week, Aggressive
+   one or two. The pace gives more than the minimum only where a step is
+   cheap: 405 lb at a 2.5 lb step gets one or two steps a week on Moderate,
+   225 lb at 2.5 two steps in four weeks of five on Aggressive, both as in
+   version 35. The minimum is what changed the rest: 20x10 on a curl is
+   20x11 every week on Moderate (version 35: two weeks of five), 225x8 in
+   6-10 at a 5 lb step is 230x8 every week (version 35: under half the
+   weeks).
    `week` is `weekOf(the workout's date)` (whole weeks since Monday
    1970-01-05 in UTC, so Monday to Sunday share a number) and `phase` is
    `phaseOf(key)` (a hash in [0, 1), so lifts at one rate do not all rise
    in the same weeks). A prediction therefore depends only on the workout's
    date, the exercise and its history, never on the day the app is opened:
    `generateWorkout`, reconciliation, `refreshPredictions` and a swap give
-   the same sets. In a week with nothing due the target is last time's
-   set, except that a reps-first lift at its jump point jumps in any week.
-   The rate is in rep-equivalents, not in weeks: on a reps-first lift
-   Moderate asks a rep in about two weeks of five, while a weight-first
-   lift, whose step costs a fraction of a rep, gets a step far more often
-   (one set done exactly as asked on Moderate: 225 lb at a 2.5 lb step
-   rises in nearly every week, 135 lb at 2.5 in about five weeks of six).
-   Versions up to 34 asked one more rep every session.
+   the same sets. Versions up to 34 asked one more rep every session;
+   version 35 had the pace alone.
 2. **The load picks the lever.** `stepCost(weight, minIncrement)` is what
    one minimum step costs in reps at that weight. Where a step costs under
    one rep (`weightFirst`: a 2.5 lb step above 100 lb, a 5 lb step above
-   200 lb, a 1.25 lb step from 17 lb) and the reps are above the range
-   bottom, the due units are weight steps at the same reps. Otherwise they
-   are reps (light dumbbells, big machine steps; a cost of exactly one rep
-   asks reps), and the weight goes up by a jump: from `triggerReps` (Light
-   at the range top, Moderate a quarter of the range width below it,
-   Aggressive at the middle: 12 / 11 / 10 of 8-12; `PRESETS[p].jumpQuarters`)
-   the weight rises, in any week, by the fewest steps that bring the reps
-   back to no more than the logged reps, converted at the step's cost, so
-   the jump itself asks nothing more (95x10 aggressive → 97.5x9, or
-   97.5x10 in a week with a rep due). The reps
-   after a jump are never reset to `repRangeMin`: that would read as an
-   accidental deload. A jump that would land under the range (a 10 lb
-   machine step on a light weight) is not taken: the reps keep rising, past
-   the range top if need be, until a jump lands.
+   200 lb, a 1.25 lb step above 8 1/3 lb) and the reps are above the range
+   bottom, the due units are weight steps at the same reps, and never more
+   steps than the reps above the range bottom pay for (`room`; what does
+   not fit is not asked: 235x7 in 6-10 at a 5 lb step gets one step, also
+   in a two-unit week). At the range bottom a weight-first lift is asked
+   reps, and there the minimum is one rep on Aggressive too
+   (`Math.min(floor, 1)`): on a heavy lift the rep is the expensive unit,
+   and two reps asked at the range top came out as three steps (270x10,
+   270x7, 270x5 in 6-10 at a 5 lb step: 285 lb; now 275).
+   Everywhere else the units are reps (light dumbbells, big machine steps;
+   a cost of exactly one rep asks reps), and the weight goes up by a jump:
+   from `triggerReps` (Light at the range top, Moderate a quarter of the
+   range width below it, Aggressive at the middle: 12 / 11 / 10 of 8-12;
+   `PRESETS[p].jumpQuarters`) the weight rises, in any week, by the fewest
+   steps that bring the reps, with the week's units added, back to no more
+   than the logged reps, converted at the step's cost (95x10 aggressive →
+   97.5x10 in a one-unit week, 100x10 in a two-unit week; on Light with
+   nothing due the jump itself asks nothing more: 20x12 at a 5 lb step →
+   25x10). Below the range top a jump is taken only where the logged reps,
+   converted to the new weight, stay in the range
+   (`at(j).reps - demand >= repRangeMin`): the week's units must not be
+   what makes a jump land. A machine at 100 lb with a 10 lb step went
+   100x10 → 110x8 on Aggressive, a set the lifter cannot do; it now climbs
+   to 100x12 first (100x11 then 100x12, or straight to 100x12 in a two-unit
+   week) and jumps from the top, to 110x9, or 110x10 in a two-unit week.
+   Below the top the target reps never pass the top either (two reps due
+   at 100x11 on that machine ask for 100x12). The reps after a jump are never reset to `repRangeMin`:
+   that would read as an accidental deload. At the top, a jump that would
+   land under the range (a 10 lb machine step on a light weight) is not
+   taken: the reps keep rising, past the range top, until a jump lands.
 
 The rest of one set's rule (`plan`, behind `nextSet`):
 
@@ -490,12 +525,14 @@ The rest of one set's rule (`plan`, behind `nextSet`):
   was done): `max(due steps, 1)` steps and never more, the reps capped at
   the range top, so one big log never doubles the weight (20x20 in 8-12 at
   a 2.5 lb step → 22.5x12).
-- Bodyweight (0 lb): the due reps, no cap.
+- Bodyweight (0 lb): the due reps, no cap (0x10: 0x11 on Moderate, 0x12 on
+  Aggressive in a two-unit week).
 - A log from the same calendar week as the target (a new day template
   falling back to this week's log of another day, or a makeup in the week
-  of that day's next session) has no units due (a jump, the overshoot
-  step and +1 under the range still apply: this week's 100x11 on Moderate
-  gives 102.5x10). Skipped weeks are not caught up.
+  of that day's next session) has no units due, the weekly minimum
+  included (a jump, the overshoot step and +1 under the range still apply:
+  this week's 100x11 on Moderate gives 102.5x10). Skipped weeks are not
+  caught up.
 - Set 1's target weight is never below its last logged weight, and there
   is no automatic back-off (with coarse steps a back-off only repeats the
   same failed jump).
@@ -555,20 +592,73 @@ light, up to 3.75 → moderate, above → aggressive, missing → moderate),
 with no migration.
 
 What it does not do, on purpose. For a lifter who trains to failure the
-preset changes the loaded weight very little (225 lb at a 2.5 lb step: 335
-/ 340 / 342.5 lb after 52 simulated weeks): the logged reps carry the real
-strength, and reps above the top force a step whatever the preset. The
-preset sets how demanding the targets are, and the screen text
-(`PRESET_HELP` in `js/ui.js`) says that and promises nothing faster. Two
-variants were simulated and turned down: a reps-first jump only when every
-set of the group lands in the range (later sets' targets under the range
-fell from 19 % to 2 %, but the load after 24 weeks fell 5 points), and
-catching up skipped weeks. Earlier rules, all gone: weight classes (light
+preset changes the loaded weight little (a simulated lifter gaining 0.4
+rep-equivalents a week, 8 lifts, 3 sets: after 26 weeks the load is 1.36 /
+1.39 / 1.43 times the start on Light / Moderate / Aggressive; 225 lb at a
+2.5 lb step with strength rising 1 % a week ends 52 weeks at 335 / 340 /
+342.5 lb, the same as under version 35): the logged
+reps carry the real strength, and reps above the top force a step whatever
+the preset. The preset sets how demanding the targets are, and the screen
+text (`PRESET_HELP` in `js/ui.js`) says that and promises nothing faster.
+The same simulation gives how often every target of a week is hit by the
+lifter a preset is named for: Light 60 % at a gain of 0.2, Moderate 58 %
+at 0.4, Aggressive 71 % at 0.8 (version 35: 60 / 71 / 87 %). That is why
+Aggressive's minimum is 1.5 and not 2: with 2 (an earlier candidate of
+this rule, before the cap at the range top and the one-rep limit on heavy
+lifts) it was 53 %, and 20 % for the lifter gaining 0.4 (now 39 %), a
+preset almost nobody hits. The price: in its one-unit weeks Aggressive
+asks what Moderate asks from the same log, except at its earlier jump
+point and where its pace gives more steps.
+
+Known limits of the weekly minimum, left on purpose (the rule is reopened
+only if Light stops being version 35's, a Moderate or Aggressive log in the
+range from an earlier week gets no gain on set 1, or something throws):
+
+- A weight-first lift with set 1 at the range top and its weakest set at
+  the bottom is asked one rep, and at the top a rep is paid in weight: 405x8
+  + 405x4 in 4-8 at a 2.5 lb step is 412.5 lb every week on Moderate and
+  Aggressive alike (version 35: 412.5 in the weeks with a unit due, 407.5
+  otherwise). Leaving that shape as it was gave no gain at all in one-rep
+  ranges, so it was turned down. Below the top the same shape is asked one
+  rep on both presets (225x9 + 225x6 in 6-10 at 2.5: 225x10, 225x7 every
+  week), so Moderate and Aggressive are equal there.
+- At its earlier jump point Aggressive can ask a little less than Moderate
+  from the same log, because the reps after a jump are rounded (5x6 in 4-8
+  at a 1.25 lb step: Moderate 5x7, Aggressive 6.25x5 in a one-unit week);
+  at most a third of a rep, and rarer than in version 35.
+- On a reps-first lift where no jump lands in the range (a one-rep range
+  such as 8-8, or a step that is huge for the load: 5 lb with a 10 lb
+  step) the reps are asked past the top every week (5x8 in 8-8 at a 1.25
+  lb step: 5x9), and in a one-rep range Aggressive's two-unit week can ask
+  two reps where one rep would have let the jump land (6.25x8: 6.25x10,
+  then 7.5x8).
+- A two-unit week can hold a weight that a one-unit week would raise: 135x10
+  in 8-12 at a 5 lb step on Aggressive is 140x10 in a one-unit week and
+  135x12 in a two-unit week (two steps would put the logged reps under the
+  range, so the jump waits and the reps are asked).
+- A later set gets no gain where set 1 is held under the range or the set
+  is already at the top beside a set 1 that holds, as in version 35.
+- The 71 % for Aggressive is pooled over the lifts: on lifts with a big
+  step (machine at 10 lb, dumbbell press at 5 lb) the lifter gaining 0.8
+  hits every target in about 40 % of weeks (version 35: about 80 %). Set
+  1 is never under the range there; a later set's target is under it in
+  most weeks, as in version 35.
+
+Variants simulated and turned down: a reps-first jump only when every set
+of the group lands in the range (later sets' targets under the range fell
+from 19 % to 2 %, but the load after 24 weeks fell 5 points); catching up
+skipped weeks; for the weekly minimum, raising the paces to a whole rep a
+week (225 lb at a 2.5 lb step would be asked two to three steps a week on
+Moderate), a minimum of 2 for Aggressive (above), and moving the steps
+that do not fit under `room` into reps (a step and a rep in one week, and
+set 1 above the range top). Earlier rules, all gone: weight classes (light
 under 45 lb, heavy from 135 lb) with a per-slot `weightIncrementPct` (the
-rule jumped at 135 lb); then, in versions 32 to 34, presets that only set
-how much weight was added once the range was full (`jumpedWeight`), with
-one more rep asked every session, so the three presets asked the same
-pace. `PRESETS` is the one place to change a rate or a jump point.
+rule jumped at 135 lb); in versions 32 to 34, presets that only set how
+much weight was added once the range was full (`jumpedWeight`), with one
+more rep asked every session, so the three presets asked the same pace;
+in version 35, the pace alone, which left a Moderate target equal to last
+time's set in three weeks of five on a reps-first lift. `PRESETS` is the
+one place to change a rate, a minimum or a jump point.
 
 ### Edit scope: "this workout only" vs "all future"
 
