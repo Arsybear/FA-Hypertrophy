@@ -249,6 +249,8 @@ function undoableMove(meso, dateIso) {
 // first is resumed and the program keeps its order.
 export function findMissedDay(meso, workouts, dateIso, todayIso) {
   if (dateIso < meso.startDate || dateIso > todayIso) return null;
+  // A gap day of a shift: a new shift from here would leave X a rest day.
+  if (schedulePosition(meso, parseLocalDate(dateIso)).gap) return null;
   const mine = workouts.filter((w) => w.mesocycleId === meso.id);
   if (mine.some((w) => w.date >= dateIso && isUsed(w))) return null;
   const blocked = new Set();

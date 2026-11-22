@@ -486,6 +486,7 @@ assert.ok(badFeature((b) => { b.mesocycles[0].shifts[0].date = "2026-02-30"; }))
 assert.ok(badFeature((b) => { b.mesocycles[0].shifts = {}; }));
 assert.ok(badFeature((b) => { b.workouts[0].makeup = "yes"; }));
 assert.ok(badFeature((b) => { b.workouts[0].makeupFor = "<b>"; }));
+assert.ok(badFeature((b) => { delete b.workouts[0].makeupFor; })); // a makeup names its missed day (Today formats it)
 assert.ok(badFeature((b) => { b.exercises.at(-1).note = "x".repeat(201); }));
 
 // --- Missed days ---
@@ -498,6 +499,9 @@ assert.deepStrictEqual(missedOn(plain, [], "2026-11-03"), ["2026-11-02", "mon"])
 assert.deepStrictEqual(missedOn(plain, [], "2026-11-05"), ["2026-11-02", "mon"]); // two in a row: the earliest
 assert.deepStrictEqual(missedOn(plain, [fixedWorkout("2026-11-02", "mon", { finished: true })], "2026-11-05"), ["2026-11-04", "wed"]); // stops at a finished one
 assert.deepStrictEqual(missedOn(plain, [fixedWorkout("2026-11-02", "mon", { touched: true })], "2026-11-05"), ["2026-11-04", "wed"]); // ...and a logged one
+// On a gap day of a shift nothing is offered: a second shift from there
+// would leave the day itself a rest day.
+assert.strictEqual(missedOn(mwf({ shifts: [{ date: "2026-11-09", days: 2 }] }), [], "2026-11-09"), null);
 assert.deepStrictEqual(missedOn(plain, [fixedWorkout("2026-11-02", "mon")], "2026-11-05"), ["2026-11-02", "mon"]); // an untouched one is still missed
 const gapWed = mwf({ shifts: [{ date: "2026-11-04", days: 1 }] }); // Wed 11-04 a gap, Wed's day on Thu
 assert.deepStrictEqual(missedOn(gapWed, [], "2026-11-08"), ["2026-11-05", "wed"]); // stops at the gap day
@@ -596,6 +600,14 @@ assert.deepStrictEqual([today11.exercises[1].sets[1].baseWeight, today11.exercis
 const refreshed = localStorage.getItem("fah_workouts");
 refreshPredictions();
 assert.strictEqual(localStorage.getItem("fah_workouts"), refreshed); // nothing changed, nothing written
+// A finished workout's predictions are never redone (a skipped set keeps its old one).
+memory.clear();
+localStorage.setItem("fah_workouts", JSON.stringify([
+  { ...fixedWorkout("2026-11-04", "wed", { finished: true }), exercises: [wex("s1", "bench", "Bench", 0, [logged(0, 100, 12)])] },
+  { ...fixedWorkout("2026-11-11", "wed", { finished: true }), exercises: [wex("s1", "bench", "Bench", 0, [{ ...blank(0), baseWeight: 1, baseReps: 1 }])] },
+]));
+refreshPredictions();
+assert.deepStrictEqual([Store.getWorkout("w-2026-11-11").exercises[0].sets[0].baseWeight, Store.getWorkout("w-2026-11-11").exercises[0].sets[0].baseReps], [1, 1]);
 
 // --- Personal records ---
 const prOf = (earlierSets, nowSets) => exercisePR(
@@ -608,6 +620,11 @@ assert.strictEqual(prOf([set(100, 8), set(90, 12)], [set(90, 10)]), null); // mo
 assert.strictEqual(prOf([set(100, 8)], [set(100, 8)]), null); // tie
 assert.strictEqual(prOf([set(100, 8)], [set(90, 10)]), null); // 90 never done before
 assert.strictEqual(prOf([set(100, 8), set(90, 8)], [set(90, 10)]), "reps");
+// Only finished workouts strictly before count: not another mesocycle's on
+// the same date, not an unfinished earlier one.
+const benchAt = (date, s, extra = {}) => ({ ...workout(date, "d", [ex("s", "bench", "Bench", s)]), ...extra });
+assert.strictEqual(exercisePR([benchAt("2026-01-01", set(90, 8)), benchAt("2026-02-01", set(200, 1), { mesocycleId: "other" })], { date: "2026-02-01" }, ex("s", "bench", "Bench", set(100, 8))), "weight");
+assert.strictEqual(exercisePR([benchAt("2026-01-01", set(90, 8)), benchAt("2026-01-15", set(200, 1), { finished: false })], { date: "2026-02-01" }, ex("s", "bench", "Bench", set(100, 8))), "weight");
 assert.strictEqual(exercisePR([{ ...workout("2026-03-01", "d", [ex("s", "bench", "Bench", set(200, 1))]) }], { date: "2026-02-01" }, ex("s", "bench", "Bench", set(100, 8))), null); // later ones do not count
 
 // --- Editing the exercise library ---
@@ -634,6 +651,8 @@ Store.saveWorkouts([...Store.getWorkouts(), workout("2026-01-03", "d", [ex("q", 
 assert.strictEqual(Store.updateExercise("row", { name: "pendlay" }), null);
 assert.strictEqual(Store.updateExercise("bench", { name: "BENCH PRESS" }).name, "BENCH PRESS");
 assert.deepStrictEqual(Store.getWorkouts().map((w) => w.exercises.map((e) => e.exerciseName)), [["BENCH PRESS", "Row"], ["BENCH PRESS"], ["Pendlay"]]);
+Store.addExercise("Curl", "Biceps"); // in the library, in no workout
+assert.strictEqual(Store.updateExercise("row", { name: "curl" }), null);
 
 // --- Which logged entry a prediction, a PR or History follows ---
 // "(unknown exercise)" (a slot whose exercise left the library) never
@@ -896,6 +915,7 @@ const weekFrom = (from, n) => Array.from({ length: n }, (_, i) => {
   return t ? t.name : "rest";
 });
 let cmeso = consecutive();
+generateWorkout(cmeso, resolveDayForDate(cmeso, parseLocalDate("2026-11-16")), "2026-11-16"); // Monday's opened, untouched
 generateWorkout(cmeso, resolveDayForDate(cmeso, parseLocalDate("2026-11-17")), "2026-11-17"); // Tuesday's own, untouched
 assert.deepStrictEqual(missedOn(cmeso, Store.getWorkouts(), "2026-11-17", "2026-11-17"), ["2026-11-16", cmeso.days[0].id]);
 assert.strictEqual(doMissedDay(cmeso, "2026-11-17", "2026-11-17", false), null); // no shift on a training day: refused
@@ -904,6 +924,7 @@ assert.strictEqual(doMissedDay(cmeso, "2026-11-17", "2026-11-17", true).dayName,
 const oneShift = ["rest", "Mon-A", "Tue-B", "Wed-C", "Thu-D", "Fri-E", "rest", "rest", "Mon-A", "Tue-B", "Wed-C", "Thu-D"];
 assert.deepStrictEqual(weekFrom("2026-11-16", 12), oneShift);
 assert.deepStrictEqual(Store.getWorkouts().filter((w) => w.date === "2026-11-17").map((w) => w.dayName), ["Mon-A"]);
+assert.deepStrictEqual(Store.getWorkouts().filter((w) => w.date === "2026-11-16"), []); // Monday's untouched one went with the shift
 // Then Tuesday logged and finished, Wednesday missed too, opened Thursday.
 const tue = Store.findWorkoutByDate(activeMeso().id, "2026-11-17");
 tue.exercises[0].sets[0] = { ...tue.exercises[0].sets[0], ...logged(0, 100, 10) };

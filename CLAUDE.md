@@ -246,20 +246,23 @@ the button is clicked, so it needs no `change` route):
 - Ticked: `Store.addShift` stores `{date: M, days: X - M}` on the mesocycle
   (M the missed date, X the day it is done). A shift inserts `days` gap days
   starting at `date`: those dates are rest days, and every later date maps
-  back by the total of the shifts before it (`schedulePosition`).
-  `resolveDayForDate` is the only place that applies this, so the week
-  strip, the calendar, Program's weekdays (`offsetWeekday`), the week number
-  (`weekNumber`) and the planned end (`plannedEndIso`) all follow. Use those
-  helpers; never work out a weekday or a week from `startDate` alone.
+  back by the total of the shifts before it. `schedulePosition` is the only
+  place that applies this; `resolveDayForDate`, `weekNumber`,
+  `plannedEndIso`, `offsetWeekday` and `findMissedDay` build on it, so the
+  week strip, the calendar, Program's weekdays, the week number and the
+  planned end all follow. Use those helpers; never work out a weekday or a
+  week from `startDate` alone. A gap day never shows the Missed card (a
+  second shift from there would leave that day a rest day).
   Several shifts in one mesocycle add up. On a day that is itself a training
   day the checkbox is ticked and disabled (that day's own workout has to
   move).
 - Unticked (a rest day only): a one-off makeup workout is generated from the
   missed day's template on the viewed date, with `makeup: true` and
   `makeupFor: M`. Nothing else moves. A makeup workout is reconciled against
-  its own day template and never dropped for a `dayId` mismatch. Once it
-  is touched or finished, Today shows "Makeup for <date>." under the week
-  strip instead of the "schedule changed" notice.
+  its own day template and never dropped for a `dayId` mismatch. Once Undo
+  is no longer offered (it is touched, finished, or something later is
+  logged), Today shows "Makeup for <date>." under the week strip instead of
+  the "schedule changed" notice.
 
 While the moved workout is untouched and nothing later is logged (`madeUp`
 in `getTodayContext`), Today offers Undo (`undoMissedDay`): it removes the
@@ -550,10 +553,12 @@ on every call; there is no separate app-state layer.
   because the failure can come from typing into a set, which must not
   re-render).
 - **Copy** (`Store.cloneMesocycle`): new ids for the mesocycle, its days and
-  slots, inactive, no workouts. Day templates are offsets from the start
-  weekday, so the copy starts on the same weekday as the original (first
-  such date after its planned end, or after today) to keep every training
-  day on its weekday.
+  slots, inactive, no workouts, no shifts. Day templates are offsets from
+  the start weekday, so the copy starts where the source's schedule would
+  have gone on: at its shifted end (`startDate` + `numWeeks` weeks +
+  `totalShiftDays`), moved on by whole weeks until it is not before today.
+  That keeps every training day on the weekday it has now — the original's
+  weekdays when nothing was shifted, the shifted ones otherwise.
 - **Exercise library** (`#/settings`): `Store.updateExercise(id, {name,
   muscleGroup, note})` is the only way an exercise changes after creation.
   A rename also rewrites `exerciseName` in every workout entry of that id

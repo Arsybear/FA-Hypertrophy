@@ -286,10 +286,10 @@ export const Store = {
   },
   // A new, inactive mesocycle with the same days and exercises (all new ids)
   // and no workouts — a starting point to adjust instead of rebuilding.
-  // Days are pinned to offsets from the start weekday, so the copy starts on
-  // the same weekday as the original to keep every training day where it
-  // was: the first such date after the original's planned end, or after
-  // today if that has already passed.
+  // Days are pinned to offsets from the start weekday, so the copy starts
+  // where the source's schedule would have gone on (its end, shifts
+  // included), moved on by whole weeks until it is not before today: every
+  // training day stays on the weekday it has now.
   cloneMesocycle(mesoId, todayIso) {
     const list = Store.getMesocycles();
     const source = list.find((m) => m.id === mesoId);
@@ -523,7 +523,7 @@ export function validateBackup(data) {
         && num(slot.repRangeMin) && num(slot.repRangeMax) && optNum(slot.weightIncrementPct) && optProgression(slot.progression))));
   const workoutsOk = all(data.workouts, (w) =>
     id(w.id) && id(w.mesocycleId) && id(w.dayId) && date(w.date) && str(w.dayName) && typeof w.finished === "boolean"
-    && (w.finishedAt == null || str(w.finishedAt)) && optBool(w.makeup) && (w.makeupFor == null || date(w.makeupFor))
+    && (w.finishedAt == null || str(w.finishedAt)) && optBool(w.makeup) && (w.makeupFor == null ? !w.makeup : date(w.makeupFor))
     && (w.skippedSlotIds == null || (Array.isArray(w.skippedSlotIds) && w.skippedSlotIds.every(id)))
     && all(w.exercises, (ex) => id(ex.slotId) && (ex.exerciseId == null || id(ex.exerciseId)) && str(ex.exerciseName)
       && num(ex.order) && num(ex.repRangeMin) && num(ex.repRangeMax) && optNum(ex.weightIncrementPct) && optBool(ex.oneOff) && optBool(ex.swapped) && optProgression(ex.progression)
