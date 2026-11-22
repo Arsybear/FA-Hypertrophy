@@ -148,6 +148,11 @@ export function reconcileWorkoutWithTemplate(workout, dayTemplate) {
 // weight that is not a prediction got it carried from another set, which
 // today's model keeps as a real value: only its reps go.
 export function migrateLegacyPrefill(workout) {
+  if (migratePrefilledSets(workout)) Store.updateWorkout(workout.id, { exercises: workout.exercises });
+}
+
+// The migration itself, in memory; returns whether a set changed.
+function migratePrefilledSets(workout) {
   let changed = false;
   workout.exercises.forEach((ex) => ex.sets.forEach((s) => {
     if (!("prefilled" in s)) return;
@@ -160,7 +165,7 @@ export function migrateLegacyPrefill(workout) {
     delete s.repsManual;
     changed = true;
   }));
-  if (changed) Store.updateWorkout(workout.id, { exercises: workout.exercises });
+  return changed;
 }
 
 // Only a real, zero-padded YYYY-MM-DD is accepted — the value is used as a
@@ -204,13 +209,14 @@ function contextFor(dateIso, realTodayIso) {
   // snapshot: drop it and follow the new schedule. One with anything logged
   // is kept as it is and never reconciled against the other day's template,
   // which would delete every exercise in it.
+  // Migrated first: an untouched legacy set would otherwise read as logged.
+  if (workout && !workout.finished) migrateLegacyPrefill(workout);
   const sameDay = !!workout && !!dayTemplate && workout.dayId === dayTemplate.id;
   if (workout && !makeup && !sameDay && !workout.finished && !isTouchedWorkout(workout)) {
     Store.removeWorkout(workout.id);
     workout = null;
   }
   if (workout && !workout.finished) {
-    migrateLegacyPrefill(workout);
     // Only today's (or a later-dated) workout follows #/program edits. A
     // past one — even reopened — stays as it was: reconciling it would add
     // exercises added to the program since, and drop (with their logged
@@ -318,6 +324,10 @@ export function undoMissedDay(meso, dateIso) {
 export function refreshPredictions() {
   const workouts = Store.getWorkouts();
   let changed = false;
+  // Legacy prefilled sets first (it runs at startup and after an import), so
+  // no unfinished workout keeps an untouched old prediction that reads as
+  // logged on every screen but its own day's.
+  for (const w of workouts) if (!w.finished && migratePrefilledSets(w)) changed = true;
   for (const w of workouts) {
     if (w.finished) continue;
     for (const ex of w.exercises) {

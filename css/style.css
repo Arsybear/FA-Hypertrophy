@@ -42,17 +42,22 @@
 
   /* Categorical palette, one hue per muscle group, validated against
      --surface with the dataviz skill's validate_palette.js (see CLAUDE.md).
+     Each hue is also muscle-tag text (10px bold), so each stays at 4.5:1 or
+     more on --surface: Quads #00a300 (5.34:1) and Abs #c27a5c (5.33:1) were
+     lightened for that. Adjacent pairs pass every check (worst CVD dE 8.4);
+     over all pairs the worst normal-vision pair is Glutes/Back (dE 7.1),
+     and every tag also carries its name.
      "Other" deliberately has no slot; it uses --muted (neutral, not a hue). */
   --mg-chest: #3987e5;
   --mg-back: #d95926;
   --mg-shoulders: #199e70;
   --mg-biceps: #c98500;
   --mg-triceps: #d55181;
-  --mg-quads: #008300;
+  --mg-quads: #00a300;
   --mg-hamstrings: #9085e9;
   --mg-glutes: #e66767;
   --mg-calves: #0097a7;
-  --mg-abs: #a1662f;
+  --mg-abs: #c27a5c;
 }
 
 * { box-sizing: border-box; }
@@ -229,13 +234,18 @@ input, select {
   font-size: 16px; /* below 16px iOS zooms the page on focus */
   color: var(--text);
   background: var(--bg);
-  border: 1px solid var(--border);
+  /* --control-edge: a box's edge at 3:1 or more against its own --bg fill,
+     the same edge as the done circle. */
+  border: 1px solid var(--control-edge);
   border-radius: var(--radius-sm);
   padding: 9px 10px;
   width: 100%;
   min-height: var(--tap);
 }
-input:focus, select:focus { outline: none; border-color: var(--accent-soft); }
+/* Boxes show focus by their border; radios and checkboxes keep the
+   :focus-visible outline (a border colour does nothing on a native radio,
+   and a ticked circle's green border outranks it). */
+input:not([type="radio"], [type="checkbox"]):focus, select:focus { outline: none; border-color: var(--accent-soft); }
 input:disabled, select:disabled { opacity: 0.6; }
 /* Full --muted (6.6:1 on --bg): readable, still well short of typed --text. */
 input::placeholder { color: var(--muted); opacity: 1; }
@@ -315,8 +325,10 @@ label input, label select { margin-top: 4px; }
 .week-day.selected { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .week-day.outside { opacity: 0.3; }
 
-/* Status dot, shared by the week strip and the month calendar: hollow =
-   training day, amber = in progress, green = finished. Hidden on rest days. */
+/* Status dot, shared by the week strip, the month calendar and its legend:
+   thin hollow = training day, thick amber ring = in progress, filled green =
+   finished. Shape as well as colour, so the states differ without colour (the
+   aria-labels name them too). Hidden on rest days. */
 .cal-dot {
   width: 6px;
   height: 6px;
@@ -325,9 +337,10 @@ label input, label select { margin-top: 4px; }
   visibility: hidden;
 }
 .train .cal-dot, .calendar-legend .cal-dot { visibility: visible; }
-.started .cal-dot, .cal-dot.started { border-color: var(--warn); background: var(--warn); }
+.started .cal-dot, .cal-dot.started { border: 2px solid var(--warn); background: transparent; }
 .finished .cal-dot, .cal-dot.finished { border-color: var(--success); background: var(--success); }
 .week-day.selected .cal-dot { border-color: var(--accent-ink); }
+.week-day.selected.started .cal-dot { border-color: var(--warn); }
 
 .calendar-panel {
   background: var(--surface);
@@ -627,6 +640,9 @@ label input, label select { margin-top: 4px; }
 .ok-text { color: var(--success); font-size: 13px; margin: 6px 0; }
 .file-btn { position: relative; margin: 0; color: var(--text); overflow: hidden; }
 .file-btn input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
+/* The input is invisible, so its keyboard focus is drawn on the button. Not
+   :focus-within: focus stays on the input after the file dialog closes. */
+.file-btn:has(input:focus-visible) { outline: 2px solid var(--accent-soft); outline-offset: 2px; }
 .meso-item .form-actions { margin: 0; align-items: center; flex: none; }
 .meso-list .card { margin-bottom: 8px; }
 .meso-item { display: flex; align-items: center; justify-content: space-between; gap: 10px; }

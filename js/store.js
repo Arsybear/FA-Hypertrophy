@@ -148,6 +148,13 @@ export function normalizeMesocycles(list) {
       }
     }
   }
+  // One active mesocycle (getActiveMesocycle takes the first, Settings
+  // showed another): a hand-edited file may mark several, and must restore.
+  let active = false;
+  for (const meso of list) {
+    if (meso.active && active) set(meso, "active", false);
+    else if (meso.active) active = true;
+  }
   return changed;
 }
 
@@ -194,6 +201,7 @@ export const Store = {
   // refused too: those entries would merge into this exercise by name.
   updateExercise(id, { name, muscleGroup, note, minIncrement } = {}) {
     const exercises = Store.getExercises();
+    const before = Store.getExercises(); // a separate copy, to put back
     const ex = exercises.find((e) => e.id === id);
     if (!ex) return null;
     const oldName = ex.name;
@@ -232,7 +240,12 @@ export const Store = {
           }
         }
       }
-      if (renamed) Store.saveWorkouts(workouts);
+      // Storage full: a renamed library over unrenamed history would cut the
+      // history off (and refuse the rename back), so the library goes back.
+      if (renamed && !writeJSON(KEYS.workouts, workouts)) {
+        writeJSON(KEYS.exercises, before);
+        return null;
+      }
     }
     return ex;
   },
@@ -461,6 +474,8 @@ export const Store = {
   // never runs on a mix of two data sets.
   importBackup(data) {
     const before = Store.exportBackup();
+    // An older import's copy goes first: no copy beats a misleading one.
+    localStorage.removeItem("fah_before_import");
     try { localStorage.setItem("fah_before_import", JSON.stringify(before)); } catch (e) { /* no room for the copy */ }
     // The same clean-up as Store.normalize, on the file before anything is written.
     normalizeMesocycles(data.mesocycles);
@@ -475,6 +490,9 @@ export const Store = {
       try {
         // The copy is the same data that is being put back: free its space.
         localStorage.removeItem("fah_before_import");
+        // Cleared first: the old values fit together before the import, but
+        // not always next to part of the new data.
+        for (const k of keys) localStorage.removeItem(KEYS[k]);
         for (const k of keys) localStorage.setItem(KEYS[k], JSON.stringify(before[k]));
       } catch (e2) { console.error("Restore after a failed import failed", e2); }
       return false;
@@ -529,6 +547,11 @@ export function validateBackup(data) {
       && num(ex.order) && num(ex.repRangeMin) && num(ex.repRangeMax) && optNum(ex.weightIncrementPct) && optBool(ex.oneOff) && optBool(ex.swapped) && optProgression(ex.progression)
       && all(ex.sets, (set) => optNum(set.weight) && optNum(set.reps) && optNum(set.baseWeight) && optNum(set.baseReps)
         && optNum(set.setIndex) && optBool(set.isLogged) && optBool(set.done) && optBool(set.prefilled) && optBool(set.repsManual))));
-  if (!exercisesOk || !mesocyclesOk || !workoutsOk) return "This backup file is damaged or was edited. Nothing was imported.";
+  // Ids are storage keys: a duplicate sends writes to the wrong item (a
+  // finished workout overwritten from today's screen).
+  const unique = (ids) => new Set(ids).size === ids.length;
+  const idsOk = () => unique(data.exercises.map((e) => e.id)) && unique(data.mesocycles.map((m) => m.id)) && unique(data.workouts.map((w) => w.id))
+    && data.mesocycles.every((m) => unique(m.days.map((d) => d.id)) && unique(m.days.flatMap((d) => d.exercises.map((s) => s.id))));
+  if (!exercisesOk || !mesocyclesOk || !workoutsOk || !idsOk()) return "This backup file is damaged or was edited. Nothing was imported.";
   return null;
 }

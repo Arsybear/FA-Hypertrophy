@@ -113,7 +113,7 @@ function renderExerciseEditForm(ex) {
   // After a refused save the form shows what was typed, not the stored values.
   const v = App.ui.exerciseDraft || { name: ex.name, muscleGroup: ex.muscleGroup || "Other", note: ex.note || "", minIncrement: ex.minIncrement ?? "" };
   return `<div class="list-row editing">
-    <div class="inline-form">
+    <div class="inline-form" ${attrs}>
       <p class="form-title">Edit exercise</p>
       ${renderFormError()}
       <label>Name <input type="text" data-role="exlib-name" value="${escapeHtml(v.name)}"></label>
@@ -206,11 +206,18 @@ export function handleSettingsAction(action, btn, view) {
   } else if (action === "save-exercise") {
     const value = (role) => view.querySelector(`[data-role="${role}"]`).value;
     const draft = { name: value("exlib-name"), muscleGroup: value("exlib-group"), note: value("exlib-note"), minIncrement: value("exlib-min-step") };
-    if (Store.updateExercise(btn.dataset.id, draft)) {
+    // writeFailed is sticky: clear it for this call to tell a full storage
+    // (the banner explains it) from a refused name, then put it back.
+    const failedBefore = Store.writeFailed;
+    Store.writeFailed = false;
+    const saved = Store.updateExercise(btn.dataset.id, draft);
+    const storageFull = Store.writeFailed;
+    Store.writeFailed = failedBefore || storageFull;
+    if (saved) {
       Object.assign(App.ui, { editExerciseOpen: null, exerciseDraft: null, formError: null });
       refreshPredictions(); // a new min step changes every untouched prediction of it
     }
-    else Object.assign(App.ui, { exerciseDraft: draft, formError: draft.name.trim() ? "Another exercise already has that name." : "Give it a name." });
+    else Object.assign(App.ui, { exerciseDraft: draft, formError: storageFull ? null : draft.name.trim() ? "Another exercise already has that name." : "Give it a name." });
   } else if (action === "open-remove-exercise") {
     Object.assign(App.ui, { removeExerciseOpen: btn.dataset.id, editExerciseOpen: null, exerciseDraft: null, formError: null });
   } else if (action === "cancel-remove-exercise") {

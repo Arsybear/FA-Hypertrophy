@@ -182,8 +182,12 @@ function controlSelector(el) {
     .map((k) => `[data-${k}="${cssEscape(el.dataset[k])}"]`).join("");
 }
 
+let lastRoute = null;
+
 export function renderCurrentView() {
   const route = currentRoute();
+  const sameRoute = route === lastRoute;
+  lastRoute = route;
   document.querySelectorAll(".nav-link").forEach((a) => {
     a.classList.toggle("active", a.dataset.route === route);
   });
@@ -194,6 +198,10 @@ export function renderCurrentView() {
   const focused = document.activeElement;
   const selector = focused && focused.matches(":focus-visible") ? controlSelector(focused) : null;
   const index = selector ? [...document.querySelectorAll(selector)].indexOf(focused) : -1;
+  // Which exercise, day or library row it belonged to, read before the render
+  // detaches it: the fallback below when the action removed the control.
+  const keyName = selector && ["slot", "day", "id"].find((k) => focused.dataset[k] != null);
+  const key = keyName ? `[data-${keyName}="${cssEscape(focused.dataset[keyName])}"]` : "";
   const overlay = document.getElementById("overlay-root");
   const view = document.getElementById("view");
   overlay.innerHTML = "";
@@ -203,8 +211,20 @@ export function renderCurrentView() {
   view.inert = modal;
   document.querySelector(".bottom-nav").inert = modal;
   if (selector && !document.activeElement?.closest("#view, #overlay-root")) {
-    const again = document.querySelectorAll(selector)[index];
-    if (again && !again.inert && !again.closest("[inert]")) again.focus({ preventScroll: true });
+    const usable = (el) => el && !el.closest("[inert]") ? el : null;
+    const again = usable(document.querySelectorAll(selector)[index]);
+    // The control is gone (Remove opens a form in place of the menu, Cancel
+    // closes the form): focus the form that opened for the same item, else any
+    // form that opened, else the item's own controls, else the main button,
+    // so the next Tab does not start again from the top of the page. Only on
+    // the same screen: a route change starts at the top on purpose.
+    const control = ":is(input, select, textarea, button):not(:disabled)";
+    const target = again || (sameRoute && (
+      (key && usable(view.querySelector(`.inline-form${key} ${control}`)))
+      || (!key && usable(view.querySelector(`.inline-form ${control}`)))
+      || (key && usable(view.querySelector(`${key}${control}`)))
+      || usable(view.querySelector('[data-action="finish-workout"], [data-action="reopen-workout"], [data-action="open-add-exercise"], [data-action="open-add-day"]'))));
+    if (target) target.focus({ preventScroll: true });
   }
   if (Store.writeFailed) showStorageError();
 }

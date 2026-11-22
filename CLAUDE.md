@@ -146,12 +146,15 @@ near-black steel surfaces with a mulberry accent. `--accent` is for fills
 (white text passes on it), `--accent-soft` for text, icons and outlines on
 dark surfaces. Green (`--success`) means done, amber (`--warn`) in progress
 — in the week strip, the calendar, set rows and the progress bar alike.
+Status is never colour alone: a done day is a filled dot, a day in progress
+a ring, and both words are in the day's `aria-label`. "In progress" means
+any set touched, for the dot and for Today's status pill alike.
 Inputs are 16px (anything smaller makes iOS zoom the page on focus) and tap
 targets are at least 44px (`--tap`). Prediction placeholders are `--muted`
 at full opacity (above 4.5:1 on the input, and lighter in weight than a
-typed value); the outline of an empty control (unticked done circle) is
-`--control-edge`, a neutral grey just above 3:1 on the card — `--muted`
-there made a column of empty circles louder than the numbers. The mark (a great helm whose face
+typed value); the outline of an empty control (unticked done circle, text
+box, select) is `--control-edge`, a neutral grey just above 3:1 on the card
+— `--muted` there made a column of empty circles louder than the numbers. The mark (a great helm whose face
 plate is the letters FA) is drawn by `scripts/make_icons.py`, which writes
 `icons/icon.svg`, `icons/mark.svg` and the PNG sizes; change the mark there
 and re-run it rather than editing the outputs.
@@ -187,7 +190,8 @@ touch `localStorage` directly elsewhere):
   reuse "Other" rather than get a hand-picked color. The palette was chosen
   and validated with Claude's `dataviz` skill (`validate_palette.js`, dark
   mode against `--surface`); redo that validation if the hue set or the
-  surface color ever changes.
+  surface color ever changes. A tag is text, so each hue is also at least
+  4.5:1 on `--surface`.
 - `fah_mesocycles` — array of every mesocycle ever created. Exactly one has
   `active: true` at a time; `Store.getActiveMesocycle()` is the source of
   truth for what `#/today` and `#/program` operate on. Each mesocycle owns
@@ -253,7 +257,9 @@ the button is clicked, so it needs no `change` route):
   planned end all follow. Use those helpers; never work out a weekday or a
   week from `startDate` alone. A gap day never shows the Missed card (a
   second shift from there would leave that day a rest day).
-  Several shifts in one mesocycle add up. On a day that is itself a training
+  Several shifts in one mesocycle add up. The planned end moves only for
+  shifts dated on or before it; a copy and Program's weekdays count every
+  shift. On a day that is itself a training
   day the checkbox is ticked and disabled (that day's own workout has to
   move).
 - Unticked (a rest day only): a one-off makeup workout is generated from the
@@ -277,8 +283,12 @@ and starts after the source's shifted end. `validateBackup` checks `shifts`
 Late logging: a past day can be opened, completed and finished at any time.
 `refreshPredictions()` rebuilds the predictions of every unfinished
 workout's untouched exercises; it is called after finish, reopen and
-import, never from `getTodayContext` (that runs on every keystroke). So
-finishing yesterday late feeds today's numbers. Today's screen also names
+import, and once at startup (`js/main.js`, after `Store.normalize()`),
+never from `getTodayContext` (that runs on every keystroke). So finishing
+yesterday late feeds today's numbers, and a workout generated before an
+update that changed the progression rules does not keep the old rule's
+numbers (reconciliation cannot see that: slot and entry carry the same
+preset). Today's screen also names
 the most recent earlier workout left half logged, with a link to it.
 
 ### Lazy workout generation + progression (`js/workout.js` `generateWorkout`, `js/progression.js`)
@@ -347,7 +357,10 @@ lifted. A consequence is that a skipped set is saved blank, which is why the
 lookup is per set index (a skipped set falls back to an older workout
 instead of losing its prediction). Unfinished workouts from before this
 change carry a `prefilled` key on each set; `migrateLegacyPrefill`
-migrates those once (clears untouched values back to blank). Each program slot has a
+migrates those once (clears untouched values back to blank). It runs for
+every unfinished workout inside `refreshPredictions()` (so at startup and
+after an import) and in `contextFor` before the stale-workout check: an old
+prediction left in `weight`/`reps` otherwise counts as a touched set. Each program slot has a
 `progression` preset, and the weight step comes from the exercise's
 `minIncrement` (`PRESETS` and `nextSet` in `js/progression.js`):
 
@@ -365,7 +378,7 @@ of 20 lb is nothing, the step is one dumbbell up), and Light and Moderate
 give the same jump wherever 2.5 % is under one and a half steps. The rep
 target after a jump is **not** reset to `repRangeMin` — that would read as
 an accidental deload (95x12 → 97.5x8 is a much easier set than 95x12).
-It is `equivalentReps` (the same estimate `setRepsHint` uses to re-hint
+It is `equivalentReps` (the same estimate `hintReps` uses to re-hint
 reps after a same-workout weight edit, see below): one rep lost per
 `pctPerRep(baseWeight)`% of load increase, where `pctPerRep` is one rep per
 2.5 lb, held between 2.5 % (from 100 lb up, in line with published
@@ -416,7 +429,10 @@ never reconciled, even when unfinished or reopened via "Reopen Workout" —
 it's already in the past, so it shouldn't gain exercises added to the
 program since, and reconciling would also drop (with their logged sets) any
 exercise removed from the program since. It still gets
-`migrateLegacyPrefill`.
+`migrateLegacyPrefill`. The week strip and the calendar show a stored
+workout only when it is finished, touched or a makeup
+(`shownWorkoutsByDate`); an untouched one left on a date the schedule no
+longer trains is ignored there, as opening that date would drop it.
 
 Separately, `handleTodayChange` in `js/views/today.js` also carries a just-entered
 **weight** (as a real value, not a hint) into every other not-yet-logged set
@@ -427,7 +443,11 @@ drop set), those stick. With no prediction, every `baseWeight` is `null`, so
 it carries everywhere. It writes both the data model and those other
 `<input>` elements directly, since this handler intentionally avoids
 `renderCurrentView()` (see below), and refreshes their reps placeholder
-(`refreshRepsHint`) to the rep estimate at the new weight. Reps are never
+(`refreshRepsHint`) to the rep estimate at the new weight (`hintReps` in
+`js/progression.js`: held inside the rep range, widened to include the
+predicted reps, so at the predicted weight the hint is the prediction even
+when that lies outside the range — the tick must save what the placeholder
+showed). Reps are never
 carried. A set that the user has already typed into (`isLogged: true`) is
 left alone. Carried sets stay unlogged, so they keep following later edits
 of the source weight, and clearing it clears them again.
@@ -489,7 +509,10 @@ the workout the user is looking at; on return from the background it pins
 only when that workout was left half logged, otherwise the new day shows.
 Going to the background also blurs a focused input: set values are saved on
 `change`, and a phone locked between sets could end the app before it
-fired.
+fired. A route change does the same (`hashchange` in `js/main.js`): Back,
+Forward or a swipe moves no focus, so the focused box is blurred before its
+screen is replaced, with the address put back to the old one for that
+moment so the value lands on the route and day the box was drawn for.
 
 A global delegated `click` and `change` listener is attached **once** to
 the `#view` container at startup (`handleGlobalClick`/`handleGlobalChange`),
@@ -516,7 +539,9 @@ the `keydown` listener in `js/main.js`) keeps Tab inside the overlay. After
 an action re-render, focus goes back to the control that had it (matched by
 `data-action`/`data-role` plus `data-slot`/`data-day`/`data-id`/`data-set`),
 but only when that focus was `:focus-visible`: a touch tap must not leave a
-focus ring behind.
+focus ring behind. When the action removed that control (a form opened in
+its place, or closed), keyboard focus moves to the form that opened for the
+same item, else to that item's own buttons, instead of falling to `<body>`.
 
 Ephemeral UI state (which inline form/history panel is open) lives in the
 module-level `App.ui` object, reset on every `hashchange` but preserved
@@ -542,11 +567,17 @@ on every call; there is no separate app-state layer.
   numbers: an out-of-range one is not a reason to refuse the file (data
   saved by older versions was not clamped and must still restore) —
   `normalizeMesocycles` clamps them on import, and `Store.normalize()` does
-  the same once at startup for what is already stored. Import replaces
+  the same once at startup for what is already stored. Duplicate ids
+  (exercises, mesocycles, workouts, the days or the slots of one mesocycle)
+  are refused: two workouts with one id would save sets into the wrong one.
+  More than one active mesocycle is repaired, not refused (the first stays
+  active). Import replaces
   everything after an inline confirm (`App.pendingImport`) and is all or
-  nothing: if storage runs out part-way the old data is put back and
-  `importBackup` returns false. The replaced data is kept under
-  `fah_before_import` when there is room.
+  nothing: if storage runs out part-way the three keys are cleared first and
+  then the old data is put back (it always fits again), and `importBackup`
+  returns false. The replaced data is kept under `fah_before_import` when
+  there is room; a copy from an earlier import is removed first, so the key
+  never holds anything but what the last import replaced.
 - **Failed writes**: `writeJSON` never throws; it sets `Store.writeFailed`
   and calls `Store.onWriteError`, which shows a notice at the top of the
   screen (`showStorageError` in `js/ui.js`, added to the page directly
@@ -566,7 +597,9 @@ on every call; there is no separate app-state layer.
   It returns null and changes nothing for an empty name, a name another
   exercise has, or a name carried by workout entries of a different
   exercise id (a deleted exercise's history would merge into this one); a
-  case-only rename is allowed. The note is edited from the Today card's
+  case-only rename is allowed. If the workouts cannot be written (storage
+  full) the library change is put back too, so a name never changes without
+  its history. The note is edited from the Today card's
   "more" menu and is cut to 200 characters.
 - **Summary and PRs**: a finished workout's Today screen shows a summary
   card (sets completed, total volume, PR count) and a badge on each PR

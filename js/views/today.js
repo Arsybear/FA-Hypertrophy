@@ -1,6 +1,6 @@
 import { Store, cleanCount, cleanSetValue, uid } from "../store.js";
 import { WEEKDAY_LABELS, addDays, daysBetween, formatDay, formatShortDate, isoDate, jsDateToWeekdayIndex, parseLocalDate, plannedEndIso, resolveDayForDate, weekNumber } from "../schedule.js";
-import { PROGRESSIONS, blankSet, equivalentReps, exercisePR, isCompleteSet, progressionOf } from "../progression.js";
+import { PROGRESSIONS, blankSet, exercisePR, hintReps, isCompleteSet, progressionOf } from "../progression.js";
 import { App, PRESET_HELP, cssEscape, emptyMesoState, escapeHtml, findLibraryExercise, fmtNum, getExerciseMuscleGroup, icon, pageHeader, plural, renderCurrentView, renderExerciseOptionsGrouped, renderFormError, renderMuscleGroupSelect, renderMuscleTag, renderPrBadge, renderProgressionSelect } from "../ui.js";
 import { buildEntrySets, doMissedDay, getExerciseHistory, getTodayContext, isTouchedSet, refreshPredictions, undoMissedDay } from "../workout.js";
 import { renderLineChart } from "../chart.js";
@@ -14,6 +14,23 @@ function workoutStatusClass(workout) {
   return workout.exercises.some((ex) => ex.sets.some(isTouchedSet)) ? "started" : "";
 }
 
+// The same status in words, for the strip's and the calendar's aria-labels
+// (the dot alone is colour and shape only).
+const STATUS_TEXT = { finished: "finished", started: "in progress" };
+
+// The workouts the week strip and the calendar draw, by date. An untouched
+// one is left out: it shows exactly as the schedule says anyway, and one left
+// behind by a schedule change (start date edited, day removed) is dropped
+// when its date is opened, so drawing it would show a day the Today screen
+// calls a rest day.
+function shownWorkoutsByDate(meso) {
+  const byDate = {};
+  Store.getWorkouts()
+    .filter((w) => w.mesocycleId === meso.id && (w.finished || w.makeup || workoutStatusClass(w)))
+    .forEach((w) => { byDate[w.date] = w; });
+  return byDate;
+}
+
 // Screen header plus a Monday-to-Sunday strip of the viewed date's week: each
 // day is a link (an ordinary route change), with the same status dot as the
 // month calendar. Like the calendar it only reads workouts, never generates.
@@ -21,10 +38,7 @@ export function renderDateNav(meso, dateIso, isToday, title) {
   const date = parseLocalDate(dateIso);
   const todayIso = isoDate(new Date());
   const monday = addDays(date, -jsDateToWeekdayIndex(date));
-  const workoutsByDate = {};
-  Store.getWorkouts()
-    .filter((w) => w.mesocycleId === meso.id)
-    .forEach((w) => { workoutsByDate[w.date] = w; });
+  const workoutsByDate = shownWorkoutsByDate(meso);
   // Nothing stops the program at numWeeks, so past the plan it is just "Week n".
   const week = weekNumber(meso, date);
   const weekText = dateIso < meso.startDate ? "" : week <= meso.numWeeks ? `Week ${week} of ${meso.numWeeks}` : `Week ${week}`;
@@ -42,7 +56,7 @@ export function renderDateNav(meso, dateIso, isToday, title) {
     const inner = `<span class="week-day-name">${WEEKDAY_LABELS[i].slice(0, 2)}</span>
       <span class="week-day-num">${d.getDate()}</span><span class="cal-dot"></span>`;
     return inBlock
-      ? `<a class="${classes}" href="#/today?date=${iso}" aria-label="${WEEKDAY_LABELS[i]}, ${formatShortDate(iso)}"${iso === dateIso ? ' aria-current="date"' : ""}>${inner}</a>`
+      ? `<a class="${classes}" href="#/today?date=${iso}" aria-label="${WEEKDAY_LABELS[i]}, ${formatShortDate(iso)}, ${trains ? STATUS_TEXT[workoutStatusClass(workout)] || "training day" : "rest day"}"${iso === dateIso ? ' aria-current="date"' : ""}>${inner}</a>`
       : `<span class="${classes} outside">${inner}</span>`;
   }).join("");
 
@@ -67,10 +81,7 @@ export function renderDateNav(meso, dateIso, isToday, title) {
 // past numWeeks, so there is no last month to stop at.
 export function renderCalendarPanel(meso, selectedIso) {
   const todayIso = isoDate(new Date());
-  const workoutsByDate = {};
-  Store.getWorkouts()
-    .filter((w) => w.mesocycleId === meso.id)
-    .forEach((w) => { workoutsByDate[w.date] = w; });
+  const workoutsByDate = shownWorkoutsByDate(meso);
 
   const firstMonth = meso.startDate.slice(0, 7);
   let month = App.ui.calendarMonth || selectedIso.slice(0, 7);
@@ -122,7 +133,7 @@ export function renderCalendarCell(c, todayIso, selectedIso) {
     workoutStatusClass(workout),
   ].filter(Boolean).join(" ");
   const what = workout ? workout.dayName : dayTemplate ? dayTemplate.name : "Rest day";
-  return `<a class="${classes}" href="#/today?date=${dateIso}" aria-label="${escapeHtml(what)}, ${formatShortDate(dateIso)}">
+  return `<a class="${classes}" href="#/today?date=${dateIso}" aria-label="${escapeHtml(what)}, ${formatShortDate(dateIso)}${isRest ? "" : `, ${STATUS_TEXT[workoutStatusClass(workout)] || "not started"}`}">
     <span class="cal-daynum">${date.getDate()}</span>
     ${!isRest ? `<span class="cal-dot"></span>` : ""}
   </a>`;
@@ -258,7 +269,7 @@ export function renderToday(container) {
     <div class="progress-card ${workout.finished ? "finished" : ""}">
       <div class="progress-text">
         <span class="progress-count"><strong>${doneSets}</strong> / ${plural(allSets.length, "set")}</span>
-        <span class="status-pill">${workout.finished ? "Finished" : doneSets > 0 ? "In progress" : "Not started"}</span>
+        <span class="status-pill">${{ finished: "Finished", started: "In progress" }[workoutStatusClass(workout)] || "Not started"}</span>
       </div>
       <div class="progress-track"><div class="progress-fill" style="width:${allSets.length ? (100 * doneSets) / allSets.length : 0}%"></div></div>
     </div>
@@ -528,6 +539,9 @@ export function handleTodayAction(action, btn, view) {
   if (action === "move-up" || action === "move-down") {
     const dir = action === "move-up" ? -1 : 1;
     const sorted = [...workout.exercises].sort((a, b) => a.order - b.order);
+    // Only today's workout is renumbered by reconciliation: a past one can
+    // hold gapped or equal orders, and swapping two equal orders moves nothing.
+    sorted.forEach((x, i) => { x.order = i; });
     const idx = sorted.findIndex((x) => x.slotId === slotId);
     const swapIdx = idx + dir;
     if (idx >= 0 && swapIdx >= 0 && swapIdx < sorted.length) {
@@ -627,12 +641,14 @@ export function handleTodayAction(action, btn, view) {
         ? Store.addExerciseSlot(meso.id, workout.dayId, { exerciseId: exercise.id, targetSets, repRangeMin, repRangeMax, progression })
         : null;
       const newSlotId = slot ? slot.id : uid();
+      // After the highest order, not the count: a removal leaves a gap.
+      const order = Math.max(-1, ...workout.exercises.map((x) => x.order)) + 1;
       workout.exercises.push({
         slotId: newSlotId, exerciseId: exercise.id, exerciseName: exercise.name,
-        order: workout.exercises.length, repRangeMin, repRangeMax, progression,
+        order, repRangeMin, repRangeMax, progression,
         // Predicted from the exercise's history, like a substitute's sets.
         sets: buildEntrySets(workout, { slotId: newSlotId, exerciseId: exercise.id, exerciseName: exercise.name, targetSets,
-          repRangeMin, repRangeMax, progression, order: workout.exercises.length }),
+          repRangeMin, repRangeMax, progression, order }),
         // Not in the template — tells reconciliation to keep it anyway.
         ...(slot ? {} : { oneOff: true }),
       });
@@ -673,16 +689,19 @@ export function handleTodayAction(action, btn, view) {
 // generic "wt"/"reps" hint. Predictions are never written into the inputs'
 // values — only what the user typed is — so a glance at the table shows
 // which sets are actually done. Once a weight is in (typed or carried), the
-// reps hint becomes the estimated rep target at that weight, clamped to the
-// exercise's rep range, same as nextSet.
+// reps hint becomes the estimated rep target at that weight (hintReps): held
+// to the rep range, widened to take in the predicted reps, which nextSet puts
+// outside the range on purpose (one rep past the top when the step is too
+// big, logged reps + 1 after a missed set). So at the predicted weight the
+// hint is the prediction, and a tick saves what the placeholder showed.
 export function setWeightHint(s) {
   return s.baseWeight ?? "wt";
 }
 
 export function setRepsHint(ex, s) {
   if (s.weight != null) {
-    const estimate = equivalentReps(s.baseWeight, s.baseReps, s.weight);
-    if (estimate != null) return Math.min(Math.max(estimate, ex.repRangeMin), ex.repRangeMax);
+    const estimate = hintReps(s.baseWeight, s.baseReps, s.weight, ex.repRangeMin, ex.repRangeMax);
+    if (estimate != null) return estimate;
   }
   return s.baseReps ?? "reps";
 }
@@ -708,11 +727,10 @@ export function handleSetDoneChange(target) {
   if (!ex) return;
   const set = ex.sets[setIndex];
   if (target.checked) {
+    // The reps hint as the placeholder showed it, read before the weight is filled.
+    const repsHint = setRepsHint(ex, set);
     if (set.weight == null && set.baseWeight != null) set.weight = set.baseWeight;
-    if (set.reps == null) {
-      const hint = setRepsHint(ex, set);
-      if (typeof hint === "number") set.reps = hint;
-    }
+    if (set.reps == null && typeof repsHint === "number") set.reps = repsHint;
     set.isLogged = set.weight != null || set.reps != null;
     if (!isCompleteSet(set)) {
       target.checked = false;

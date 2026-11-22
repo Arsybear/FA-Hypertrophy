@@ -100,7 +100,11 @@ export function weekNumber(meso, date) {
 
 // Last day of the planned weeks, moved out by the shifts.
 export function plannedEndIso(meso) {
-  return isoDate(addDays(parseLocalDate(meso.startDate), meso.numWeeks * 7 - 1 + totalShiftDays(meso)));
+  let end = addDays(parseLocalDate(meso.startDate), meso.numWeeks * 7 - 1);
+  // Only a shift dated on or before the running end moves it (shifts are
+  // sorted); one after the planned end changes nothing in the plan.
+  for (const s of meso.shifts || []) if (s.date <= isoDate(end)) end = addDays(end, s.days);
+  return isoDate(end);
 }
 
 // The weekday (0 = Monday) a day template with this offset trains on now.

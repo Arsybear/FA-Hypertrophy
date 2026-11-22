@@ -4,15 +4,21 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { addDays, daysBetween, isIsoDate, offsetWeekday, plannedEndIso, totalShiftDays, weekNumber, formatDay, formatShortDate, isoDate, parseLocalDate, resolveDayForDate } from "../js/schedule.js";
-import { buildPrefilledSets, equivalentReps, exercisePR, findLastLoggedSet, minIncrementFor, nextSet, pctPerRep, presetFromPct, progressionOf } from "../js/progression.js";
+import { buildPrefilledSets, equivalentReps, exercisePR, findLastLoggedSet, hintReps, minIncrementFor, nextSet, pctPerRep, presetFromPct, progressionOf } from "../js/progression.js";
 import { APP_VERSION } from "../js/version.js";
 
 // store.js only touches localStorage inside functions, so a Map stands in.
 const memory = new Map();
 let fullKey = null; // a write to this key fails, as when storage is full
+let quota = Infinity; // characters of keys and values, as browsers count a replaced key by its change
+const used = () => [...memory].reduce((n, [k, v]) => n + k.length + v.length, 0);
 globalThis.localStorage = {
   getItem: (k) => (memory.has(k) ? memory.get(k) : null),
-  setItem: (k, v) => { if (k === fullKey) throw new Error("QuotaExceededError"); memory.set(k, String(v)); },
+  setItem: (k, v) => {
+    const after = used() - (memory.has(k) ? k.length + memory.get(k).length : 0) + k.length + String(v).length;
+    if (k === fullKey || after > quota) throw new Error("QuotaExceededError");
+    memory.set(k, String(v));
+  },
   removeItem: (k) => memory.delete(k),
 };
 const { Store, cleanMinIncrement, cleanSetValue, normalizeMesocycles, validateBackup } = await import("../js/store.js");
@@ -65,6 +71,10 @@ assert.strictEqual(ns(100, 15, 8, 12, "moderate", 2.5), "102.5x12"); // an overs
 assert.strictEqual(ns(17.5, 9, 6, 9, "moderate", 2.5), "20x8"); // the user's points
 assert.strictEqual(ns(15, 8, 5, 8, "moderate", 5), "20x6");
 assert.deepStrictEqual({ ...nextSet(set(0, 12), 8, 12, "moderate") }, { weight: 0, reps: 13 }); // bodyweight
+// The reps placeholder after a weight is typed: at the predicted weight it
+// is the predicted reps, whatever the range.
+assert.deepStrictEqual([[100, 6, 100, 8, 12], [100, 6, 100, 5, 5], [10, 13, 10, 10, 12], [60, 10, 70, 4, 12], [60, 10, 70, 8, 12]].map((a) => hintReps(...a)), [6, 6, 13, 6, 8]);
+assert.strictEqual(hintReps(null, null, 100, 8, 12), null);
 // Presets of slots and entries saved before presets (weightIncrementPct only).
 assert.deepStrictEqual([undefined, 2.5, 0, 1, 1.25, 3.75, 4, 5].map(presetFromPct), ["moderate", "moderate", "light", "light", "moderate", "moderate", "aggressive", "aggressive"]);
 assert.strictEqual(progressionOf({ progression: "constructor" }), "moderate");
@@ -190,15 +200,29 @@ assert.ok(Store.getMesocycles().every((m) => validateBackup({ app: "fa-hypertrop
 // An import that runs out of space part-way puts back what was there.
 const realError = console.error;
 console.error = () => {}; // the failures below are logged on purpose
-Store.importBackup(backup);
-const before = ["fah_exercises", "fah_mesocycles", "fah_workouts"].map((k) => localStorage.getItem(k));
+// Storage nearly full, no room for the copy: the old data has a big library,
+// the file a small one, a program as much bigger as the library is smaller,
+// and a log that does not fit. The old values all go back (they fit before).
+const bigLibrary = JSON.parse(JSON.stringify(backup));
+bigLibrary.exercises.push(...Array.from({ length: 40 }, (_, i) => ({ id: `x${i}`, name: `Filler ${i}`.padEnd(60, ".") })));
+Store.importBackup(bigLibrary);
+localStorage.removeItem("fah_before_import");
+const liveKeys = ["fah_exercises", "fah_mesocycles", "fah_workouts"];
+const before = liveKeys.map((k) => localStorage.getItem(k));
 const other = JSON.parse(JSON.stringify(backup));
-other.mesocycles[0].name = "Other";
-other.workouts = [];
-fullKey = "fah_workouts";
+other.mesocycles[0].name += "o".repeat(JSON.stringify(bigLibrary.exercises).length - JSON.stringify(backup.exercises).length);
+other.workouts[0].dayName += "w".repeat(5000);
+quota = used() + 100;
 assert.strictEqual(Store.importBackup(other), false);
+quota = Infinity;
+assert.deepStrictEqual(liveKeys.map((k) => localStorage.getItem(k)), before);
+// An older import's copy never stays as the copy of a later one.
+Store.importBackup(backup);
+assert.ok(localStorage.getItem("fah_before_import"));
+fullKey = "fah_before_import";
+assert.strictEqual(Store.importBackup(backup), true);
 fullKey = null;
-assert.deepStrictEqual(["fah_exercises", "fah_mesocycles", "fah_workouts"].map((k) => localStorage.getItem(k)), before);
+assert.strictEqual(localStorage.getItem("fah_before_import"), null);
 
 // A failed write is reported, not thrown and not silent.
 let reported = 0;
@@ -334,6 +358,17 @@ ctx = at(dayIso(-7));
 assert.strictEqual(ctx.isToday, false);
 assert.deepStrictEqual(stored()[0].exercises.map((e) => e.slotId), ["s1", "gone"]);
 assert.deepStrictEqual(stored()[0].exercises[0].sets[1], { setIndex: 1, weight: null, reps: null, baseWeight: 100, baseReps: 9, isLogged: false });
+// An untouched legacy workout reads as untouched everywhere: migrated before
+// the stale-day check (dropped on its first view), and refreshPredictions
+// (startup, import) migrates every unfinished one, so it no longer blocks
+// the Missed card.
+seed(program(), [unfinished("old", dayIso(-1), "A", [wex("s1", "bench", "Bench", 0, [{ ...legacySet, setIndex: 0 }])])]);
+assert.strictEqual(at(dayIso(-1)).workout.dayId, "Y");
+assert.deepStrictEqual(stored().map((w) => w.id).includes("old"), false);
+seed(program(), [unfinished("leg", dayIso(-1), "Y", [wex("s4", "curl", "Curl", 0, [{ ...legacySet, setIndex: 0 }])])]);
+refreshPredictions();
+assert.deepStrictEqual(stored()[0].exercises[0].sets[0], { setIndex: 0, weight: null, reps: null, baseWeight: null, baseReps: null, isLogged: false }); // then predicted afresh (no history here)
+assert.ok(findMissedDay(Store.getActiveMesocycle(), stored(), todayIso, todayIso));
 // Today's is reconciled: the program's new exercise shows up.
 seed(program(), [unfinished("now", todayIso, "A", [wex("s1", "bench", "Bench", 0, [logged(0, 100, 8), blank(1)])])]);
 assert.deepStrictEqual(at().workout.exercises.map((e) => e.slotId), ["s1", "s2"]);
@@ -486,7 +521,23 @@ assert.ok(badFeature((b) => { b.mesocycles[0].shifts[0].date = "2026-02-30"; }))
 assert.ok(badFeature((b) => { b.mesocycles[0].shifts = {}; }));
 assert.ok(badFeature((b) => { b.workouts[0].makeup = "yes"; }));
 assert.ok(badFeature((b) => { b.workouts[0].makeupFor = "<b>"; }));
-assert.ok(badFeature((b) => { delete b.workouts[0].makeupFor; })); // a makeup names its missed day (Today formats it)
+assert.ok(badFeature((b) => { delete b.workouts[0].makeupFor; }));
+// Ids are unique: exercises, mesocycles, workouts, and the days and the
+// slots of one mesocycle. More than one active mesocycle still restores.
+assert.ok(badFeature((b) => { b.workouts.push({ ...b.workouts[0], date: "2026-10-06" }); }));
+assert.ok(badFeature((b) => { b.exercises.push({ ...b.exercises[0], name: "Other name" }); }));
+assert.ok(badFeature((b) => { b.mesocycles[1].id = b.mesocycles[0].id; }));
+assert.ok(badFeature((b) => { b.mesocycles[0].days.push({ ...b.mesocycles[0].days[0], exercises: [], weekdayOffset: 1 }); }));
+assert.ok(badFeature((b) => { b.mesocycles[0].days.push({ id: "d2", name: "Pull", weekdayOffset: 1, exercises: [{ ...b.mesocycles[0].days[0].exercises[0] }] }); }));
+assert.strictEqual(badFeature((b) => { b.mesocycles[1].days = JSON.parse(JSON.stringify(b.mesocycles[0].days)); }), null); // another mesocycle's ids may repeat
+const twoActive = JSON.parse(JSON.stringify(featureBackup));
+twoActive.mesocycles.forEach((m) => { m.active = true; });
+assert.strictEqual(validateBackup(twoActive), null);
+assert.strictEqual(Store.importBackup(twoActive), true);
+assert.deepStrictEqual(Store.getMesocycles().map((m) => m.active), [true, false, false]);
+const twoActiveStored = twoActive.mesocycles.map((m) => ({ ...m, active: true }));
+assert.strictEqual(normalizeMesocycles(twoActiveStored), true); // the same at startup
+assert.deepStrictEqual(twoActiveStored.map((m) => m.active), [true, false, false]); // a makeup names its missed day (Today formats it)
 assert.ok(badFeature((b) => { b.exercises.at(-1).note = "x".repeat(201); }));
 
 // --- Missed days ---
@@ -653,6 +704,15 @@ assert.strictEqual(Store.updateExercise("bench", { name: "BENCH PRESS" }).name, 
 assert.deepStrictEqual(Store.getWorkouts().map((w) => w.exercises.map((e) => e.exerciseName)), [["BENCH PRESS", "Row"], ["BENCH PRESS"], ["Pendlay"]]);
 Store.addExercise("Curl", "Biceps"); // in the library, in no workout
 assert.strictEqual(Store.updateExercise("row", { name: "curl" }), null);
+// Storage full on the history write: the rename is undone, not half done.
+console.error = () => {};
+fullKey = "fah_workouts";
+assert.strictEqual(Store.updateExercise("row", { name: "Seated Row" }), null);
+fullKey = null;
+console.error = realError;
+Store.writeFailed = false;
+assert.strictEqual(Store.getExercises().find((e) => e.id === "row").name, "Row");
+assert.deepStrictEqual(Store.getWorkouts().map((w) => w.exercises.map((e) => e.exerciseName)), [["BENCH PRESS", "Row"], ["BENCH PRESS"], ["Pendlay"]]);
 
 // --- Which logged entry a prediction, a PR or History follows ---
 // "(unknown exercise)" (a slot whose exercise left the library) never
@@ -814,6 +874,11 @@ localStorage.setItem("fah_mesocycles", JSON.stringify([{ id: "m", name: "M", num
   days: [{ id: "d", name: "D", weekdayOffset: 0, exercises: [slot("a", "bench", 2), slot("b", "row", 0), slot("c", "curl", 1), slot("e", "bench", 3)] }] }]));
 Store.removeExerciseSlot("m", "d", "b");
 assert.deepStrictEqual(Store.getMesocycles()[0].days[0].exercises.map((e) => [e.id, e.order]), [["a", 1], ["c", 0], ["e", 2]]);
+
+// A shift after the planned end does not move the planned end.
+assert.strictEqual(plannedEndIso({ startDate: "2026-11-02", numWeeks: 1, shifts: [{ date: "2026-11-16", days: 1 }] }), "2026-11-08");
+assert.strictEqual(plannedEndIso({ startDate: "2026-11-02", numWeeks: 1, shifts: [{ date: "2026-11-04", days: 2 }, { date: "2026-11-11", days: 1 }] }), "2026-11-10");
+assert.strictEqual(plannedEndIso({ startDate: "2026-11-02", numWeeks: 1, shifts: [{ date: "2026-11-04", days: 2 }, { date: "2026-11-10", days: 1 }] }), "2026-11-11");
 
 // --- Presets and the minimum step: storage ---
 assert.deepStrictEqual([undefined, null, "", "  ", "abc", Infinity, "5", 0, "0", -3, 0.1, 2.555, 250, 10].map(cleanMinIncrement),

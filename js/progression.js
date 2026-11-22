@@ -34,6 +34,17 @@ export function equivalentReps(baseWeight, baseReps, newWeight) {
   return Math.max(1, Math.round(baseReps - pctChange / pctPerRep(baseWeight)));
 }
 
+// The reps placeholder for a set whose weight box holds `weight`: the
+// estimate from the prediction (baseWeight x baseReps), held to the rep range
+// widened to include baseReps, so at the predicted weight it is exactly
+// baseReps (a prediction outside the range is shown, and saved by a tick,
+// as predicted). Null when there is no estimate.
+export function hintReps(baseWeight, baseReps, weight, repRangeMin, repRangeMax) {
+  const estimate = equivalentReps(baseWeight, baseReps, weight);
+  if (estimate == null) return null;
+  return Math.min(Math.max(estimate, Math.min(repRangeMin, baseReps)), Math.max(repRangeMax, baseReps));
+}
+
 // Slots and entries saved before presets have only weightIncrementPct: the
 // nearest preset's stepPct (0 / 2.5 / 5), a tie going to moderate.
 export function presetFromPct(pct) {
