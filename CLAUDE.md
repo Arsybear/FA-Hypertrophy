@@ -544,7 +544,8 @@ by one, straight sets ended up at different weights in most weeks. The
 weight-first condition reads the weakest set of the group, so the weight
 does not climb away from a set sitting at the range bottom. The other sets
 of the group take set 1's weight and set 1's demand from their own reps
-(no demand for a set whose own log is from the target's week): at an
+(no demand when set 1 is under the range, where its +1 is not a demand,
+or when set 1's log or the set's own log is from the target's week): at an
 unchanged weight, reps plus the week's demand (+1 under the range); at a
 changed weight, the reps converted to the new weight, shown as computed
 even under the range (a tick logs the placeholder, so it has to be a set
