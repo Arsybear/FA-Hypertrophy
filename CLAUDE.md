@@ -328,8 +328,9 @@ exercise in it). Generation snapshots the day template's slots into
 the workout's `exercises[]` and builds each slot's `sets[]` via
 `buildPrefilledSets`, which finds, **per set index**, the most recent
 *finished* workout where that exercise's set was actually logged
-(`findLastLoggedSet`), and applies double progression (`nextSet` in
-`js/progression.js`). History and predictions follow the **exercise, never
+(`findLastLoggedEntry`; `findLastLoggedSet` wraps it), and applies the
+progression rule to all the sets of the exercise together (`nextSets` in
+`js/progression.js`, see The progression rule below). History and predictions follow the **exercise, never
 the slot** (`exerciseMatchers`): `exerciseId` + `slotId`, then `exerciseId`,
 then `exerciseName` (entries with a missing/stale id; library names are
 unique). The placeholder name "(unknown exercise)" never matches by name,
@@ -361,51 +362,11 @@ migrates those once (clears untouched values back to blank). It runs for
 every unfinished workout inside `refreshPredictions()` (so at startup and
 after an import) and in `contextFor` before the stale-workout check: an old
 prediction left in `weight`/`reps` otherwise counts as a touched set. Each program slot has a
-`progression` preset, and the weight step comes from the exercise's
-`minIncrement` (`PRESETS` and `nextSet` in `js/progression.js`):
-
-- Light: fill the rep range, then add one minimum step.
-- Moderate (the default): fill the rep range, then add about 2.5 % of the
-  weight.
-- Aggressive: add weight from the middle of the range
-  (`repRangeMin + ceil((max - min) / 2)`), about 5 % at a time.
-
-Below the preset's trigger the next target is one more rep at the same
-weight (capped at `repRangeMax`). At the trigger the weight goes up by the
-preset's percentage rounded to the NEAREST whole number of minimum steps,
-never fewer than one (`jumpedWeight`) — so a light weight still moves (2.5 %
-of 20 lb is nothing, the step is one dumbbell up), and Light and Moderate
-give the same jump wherever 2.5 % is under one and a half steps. The rep
-target after a jump is **not** reset to `repRangeMin` — that would read as
-an accidental deload (95x12 → 97.5x8 is a much easier set than 95x12).
-It is `equivalentReps` (the same estimate `hintReps` uses to re-hint
-reps after a same-workout weight edit, see below): one rep lost per
-`pctPerRep(baseWeight)`% of load increase, where `pctPerRep` is one rep per
-2.5 lb, held between 2.5 % (from 100 lb up, in line with published
-reps-at-percentage tables) and 15 % (under 17 lb). The "one rep per 2.5 lb"
-is fitted to the user's own week-over-week progressions (17.5x9 → 20x8,
-15x8 → 20x6), which a test pins; everything between 17 and 100 lb
-stretches those two points. Don't swap back to a single 1RM formula
-(Epley/Brzycki): because it assumes one rep/weight curve for every exercise
-it turned 15x9 → 20 lb into 20x1. If the estimate lands below
-`repRangeMin` (a 10 lb machine step on a light weight), the weight does not
-go up yet: the target is one more rep at the same weight, past the range
-top if need be, until the jump lands inside the range. A set that missed
-its target just gets "logged reps + 1" next time — there is no automatic
-drop in weight (sets are taken to failure, and with coarse steps a back-off
-only repeats the same failed jump). Bodyweight sets (0 lb) add a rep with
-no cap. An earlier version had weight classes (light under 45 lb, heavy from
-135 lb with a midpoint trigger) and a per-slot `weightIncrementPct`; both
-are gone. The classes made the rule jump at 135 lb and, between about 35
-and 122 lb, let the weight rise every week at no rep cost. Slots and
-workout entries saved before presets still carry only `weightIncrementPct`:
-`progressionOf` maps it when read (under 1.25 → light, up to 3.75 →
-moderate, above → aggressive, missing → moderate), with no migration.
-A workout entry snapshots its slot's `progression` like the rep range; a
-preset or range edit on Program rebuilds the predictions of today's
-untouched entry through reconciliation, and a `minIncrement` change calls
-`refreshPredictions()`. The design, its sources and the simulations behind
-it are summarised in the commit that introduced it.
+`progression` preset and each exercise a `minIncrement`; what they do is
+under The progression rule below. A workout entry snapshots its slot's
+`progression` like the rep range; a preset or range edit on Program
+rebuilds the predictions of today's untouched entry through
+reconciliation, and a `minIncrement` change calls `refreshPredictions()`.
 No prior history → plain "wt"/"reps" placeholders (manual
 baseline).
 
@@ -473,6 +434,141 @@ with nothing chosen stays open and says why (`App.ui.formError`,
 `renderFormError`); the same goes for `#/program`'s forms. "Finish workout"
 asks first only when some set has no weight and reps (a filled-in but
 unticked set is complete and needs no question).
+
+### The progression rule (`js/progression.js`)
+
+Two separate systems, by the user's design ("system 1 is essentially the
+user setting how aggressively they want to and think they could progress.
+Moderate being average"; the second exists because "increasing a rep at 230
+is much harder than increasing a rep at 10 pounds"):
+
+1. **The preset is a pace.** It sets how much is asked per week, in
+   rep-equivalents (one more rep at the same weight, or the weight that
+   costs one rep), the same at every load: Light 0.2, Moderate 0.4 (the
+   default), Aggressive 0.8 (`PRESETS[p].repsPerWeek`; from 100 lb up that
+   is about 0.5 / 1 / 2 % of the load a week). A fraction of a rep cannot
+   be asked in one session, so whole units fall due in some calendar weeks:
+   `dueUnits(perWeek, week, phase)` is `floor(perWeek + u)`, `u` a
+   golden-ratio sequence over the weeks shifted by the exercise's phase.
+   `week` is `weekOf(the workout's date)` (whole weeks since Monday
+   1970-01-05 in UTC, so Monday to Sunday share a number) and `phase` is
+   `phaseOf(key)` (a hash in [0, 1), so lifts at one rate do not all rise
+   in the same weeks). A prediction therefore depends only on the workout's
+   date, the exercise and its history, never on the day the app is opened:
+   `generateWorkout`, reconciliation, `refreshPredictions` and a swap give
+   the same sets. In a week with nothing due the target is last time's
+   set, except that a reps-first lift at its jump point jumps in any week.
+   The rate is in rep-equivalents, not in weeks: on a reps-first lift
+   Moderate asks a rep in about two weeks of five, while a weight-first
+   lift, whose step costs a fraction of a rep, gets a step far more often
+   (one set done exactly as asked on Moderate: 225 lb at a 2.5 lb step
+   rises in nearly every week, 135 lb at 2.5 in about five weeks of six).
+   Versions up to 34 asked one more rep every session.
+2. **The load picks the lever.** `stepCost(weight, minIncrement)` is what
+   one minimum step costs in reps at that weight. Where a step costs under
+   one rep (`weightFirst`: a 2.5 lb step above 100 lb, a 5 lb step above
+   200 lb, a 1.25 lb step from 17 lb) and the reps are above the range
+   bottom, the due units are weight steps at the same reps. Otherwise they
+   are reps (light dumbbells, big machine steps; a cost of exactly one rep
+   asks reps), and the weight goes up by a jump: from `triggerReps` (Light
+   at the range top, Moderate a quarter of the range width below it,
+   Aggressive at the middle: 12 / 11 / 10 of 8-12; `PRESETS[p].jumpQuarters`)
+   the weight rises, in any week, by the fewest steps that bring the reps
+   back to no more than the logged reps, converted at the step's cost, so
+   the jump itself asks nothing more (95x10 aggressive → 97.5x9, or
+   97.5x10 in a week with a rep due). The reps
+   after a jump are never reset to `repRangeMin`: that would read as an
+   accidental deload. A jump that would land under the range (a 10 lb
+   machine step on a light weight) is not taken: the reps keep rising, past
+   the range top if need be, until a jump lands.
+
+The rest of one set's rule (`plan`, behind `nextSet`):
+
+- Under the range: one more rep at the same weight every session, whatever
+  the preset.
+- Reps above the range top (sets are taken to failure, so the log is what
+  was done): `max(due steps, 1)` steps and never more, the reps capped at
+  the range top, so one big log never doubles the weight (20x20 in 8-12 at
+  a 2.5 lb step → 22.5x12).
+- Bodyweight (0 lb): the due reps, no cap.
+- A log from the same calendar week as the target (a new day template
+  falling back to this week's log of another day, or a makeup in the week
+  of that day's next session) has no units due (a jump, the overshoot
+  step and +1 under the range still apply: this week's 100x11 on Moderate
+  gives 102.5x10). Skipped weeks are not caught up.
+- Set 1's target weight is never below its last logged weight, and there
+  is no automatic back-off (with coarse steps a back-off only repeats the
+  same failed jump).
+
+**The sets of one exercise are planned together** (`nextSets`). Set 1 and
+every set that had set 1's weight in its own last logged workout (straight
+sets) form a group with one target weight, decided from set 1; planned one
+by one, straight sets ended up at different weights in most weeks. The
+weight-first condition reads the weakest set of the group, so the weight
+does not climb away from a set sitting at the range bottom. The other sets
+of the group take set 1's weight and set 1's demand from their own reps
+(no demand for a set whose own log is from the target's week): at an
+unchanged weight, reps plus the week's demand (+1 under the range); at a
+changed weight, the reps converted to the new weight, shown as computed
+even under the range (a tick logs the placeholder, so it has to be a set
+the lifter can do). The reps are capped at the range top, or at set 1's
+target reps when those are higher; bodyweight has no cap. A set that had
+another weight than set 1 in its own workout (a drop set, a pyramid) is
+planned alone, and so is every set when set 1 has no history or was left
+blank last time. A straight set always takes the group's weight, also one
+that fell back to an older workout (skipped last time): sending such a set
+on alone split it off for good, because once logged at its own weight
+beside a heavier set 1 it reads as a drop set. When its log is at another
+weight than set 1's last one and converting it to the group's weight costs
+more than `MAX_CONVERT_REPS` (4) reps, it gets the weight and no rep
+target (`reps: null`: 150x9 under a 185 lb group would be 187.5x1, a
+guess); the set row then shows the weight and a plain "reps" box, and a
+tick moves focus there. Testing every lighter set for joining was turned
+down: it pulls a deliberate drop or back-off set into the group whenever
+its reps are high (30 lb then a drop to 25x12 converts to 30x10). A group
+set follows set 1 even when its own older log was heavier. Known limit:
+with set 1 left blank the sets are planned alone that week and can stay
+apart afterwards, until they are logged at one weight again.
+
+The conversions (`equivalentReps`, also behind `hintReps`, which re-hints
+reps after a same-workout weight edit): one rep lost per
+`pctPerRep(baseWeight)`% of load increase, where `pctPerRep` is one rep per
+2.5 lb, held between 2.5 % (from 100 lb up, in line with published
+reps-at-percentage tables) and 15 % (under 17 lb). The "one rep per 2.5 lb"
+is fitted to the user's own week-over-week progressions (17.5x9 → 20x8,
+15x8 → 20x6), which a test pins; everything between 17 and 100 lb
+stretches those two points. Don't swap back to a single 1RM formula
+(Epley/Brzycki): because it assumes one rep/weight curve for every exercise
+it turned 15x9 → 20 lb into 20x1.
+
+In the app: `plan` and `nextSet` throw a TypeError without a whole week or
+a phase (the tests rely on it), so `buildPrefilledSets`, the only caller,
+returns blank sets when the workout's date gives no whole week (a
+hand-edited "2026-13-01"): `refreshPredictions` runs at startup, and a
+throw there would stop the app. The phase key is the library exercise's
+id, found by id and then by name as `minIncrementFor` finds it (else the
+entry's own id, else its name), so an old entry with no `exerciseId` and a
+renamed exercise keep their weeks. Nothing new is stored for this rule.
+Slots and workout entries saved before presets still carry only
+`weightIncrementPct`: `progressionOf` maps it when read (under 1.25 →
+light, up to 3.75 → moderate, above → aggressive, missing → moderate),
+with no migration.
+
+What it does not do, on purpose. For a lifter who trains to failure the
+preset changes the loaded weight very little (225 lb at a 2.5 lb step: 335
+/ 340 / 342.5 lb after 52 simulated weeks): the logged reps carry the real
+strength, and reps above the top force a step whatever the preset. The
+preset sets how demanding the targets are, and the screen text
+(`PRESET_HELP` in `js/ui.js`) says that and promises nothing faster. Two
+variants were simulated and turned down: a reps-first jump only when every
+set of the group lands in the range (later sets' targets under the range
+fell from 19 % to 2 %, but the load after 24 weeks fell 5 points), and
+catching up skipped weeks. Earlier rules, all gone: weight classes (light
+under 45 lb, heavy from 135 lb) with a per-slot `weightIncrementPct` (the
+rule jumped at 135 lb); then, in versions 32 to 34, presets that only set
+how much weight was added once the range was full (`jumpedWeight`), with
+one more rep asked every session, so the three presets asked the same
+pace. `PRESETS` is the one place to change a rate or a jump point.
 
 ### Edit scope: "this workout only" vs "all future"
 

@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { addDays, daysBetween, isIsoDate, offsetWeekday, plannedEndIso, totalShiftDays, weekNumber, formatDay, formatShortDate, isoDate, parseLocalDate, resolveDayForDate } from "../js/schedule.js";
-import { buildPrefilledSets, equivalentReps, exercisePR, findLastLoggedSet, hintReps, minIncrementFor, nextSet, pctPerRep, presetFromPct, progressionOf } from "../js/progression.js";
+import { PRESETS, PROGRESSIONS, buildPrefilledSets, dueUnits, equivalentReps, exercisePR, findLastLoggedSet, hintReps, minIncrementFor, nextSet, nextSets, pctPerRep, phaseOf, presetFromPct, progressionOf, stepCost, triggerReps, weekOf, weightFirst } from "../js/progression.js";
 import { APP_VERSION } from "../js/version.js";
 
 // store.js only touches localStorage inside functions, so a Map stands in.
@@ -50,27 +50,135 @@ const legacy = [workout("2026-01-01", "d", [ex("a", undefined, "Row", set(90, 10
 assert.strictEqual(findLastLoggedSet(legacy, "d", "zz", "row-new-id", 0, "2026-02-01", "Row").weight, 90);
 assert.strictEqual(findLastLoggedSet(legacy, "d", "zz", "row-new-id", 0, "2026-01-01", "Row"), null);
 
-// Double progression with presets (spec-presets.md test lines).
-const ns = (w, r, min, max, preset, inc) => { const n = nextSet(set(w, r), min, max, preset, inc); return `${n.weight}x${n.reps}`; };
-assert.strictEqual(ns(100, 8, 8, 12, "moderate", 2.5), "100x9");
-assert.strictEqual(ns(95, 12, 8, 12, "moderate", 2.5), "97.5x11");
-assert.strictEqual(ns(95, 12, 8, 12, "light", 2.5), "97.5x11");
-assert.strictEqual(ns(95, 10, 8, 12, "aggressive", 2.5), "100x8");
-assert.strictEqual(ns(95, 10, 8, 12, "moderate", 2.5), "95x11");
-assert.strictEqual(ns(225, 8, 5, 8, "moderate", 5), "230x7");
-assert.strictEqual(ns(225, 8, 5, 8, "moderate", 2.5), "230x7");
-assert.strictEqual(ns(225, 8, 5, 8, "light", 2.5), "227.5x8");
-assert.strictEqual(ns(225, 7, 5, 8, "aggressive", 5), "235x5");
-for (const preset of ["light", "moderate", "aggressive"]) assert.strictEqual(ns(20, 12, 8, 12, preset, 5), "25x10", preset);
-assert.strictEqual(ns(20, 12, 8, 12, "moderate", 10), "30x8");
-assert.strictEqual(ns(20, 10, 8, 12, "moderate", 10), "20x11");
-assert.deepStrictEqual([15, 16, 17].map((r) => ns(10, r, 10, 15, "moderate", 10)), ["10x16", "10x17", "20x10"]); // step too big: earn it with reps
-assert.strictEqual(ns(60, 12, 8, 12, "moderate", 5), "65x10");
-assert.strictEqual(ns(235, 4, 5, 8, "moderate", 5), "235x5"); // a miss
-assert.strictEqual(ns(100, 15, 8, 12, "moderate", 2.5), "102.5x12"); // an overshoot
-assert.strictEqual(ns(17.5, 9, 6, 9, "moderate", 2.5), "20x8"); // the user's points
-assert.strictEqual(ns(15, 8, 5, 8, "moderate", 5), "20x6");
-assert.deepStrictEqual({ ...nextSet(set(0, 12), 8, 12, "moderate") }, { weight: 0, reps: 13 }); // bodyweight
+// The progression rule (coach's spec-lines.txt): the preset is a pace in
+// rep-equivalents a week, due as whole units on calendar weeks per exercise.
+const DATES = ["2026-11-23", "2026-11-30", "2026-12-07", "2026-12-14", "2026-12-21"];
+const ns = (w, r, min, max, preset, inc, date, id = "bench") => { const n = nextSet(set(w, r), min, max, preset, inc, weekOf(date), phaseOf(id)); return `${n.weight}x${n.reps}`; };
+const fmt = (sets) => sets.map((s) => s && `${s.weight}x${s.reps ?? "-"}`); // x-: a weight with no rep target
+assert.deepStrictEqual(["1970-01-05", "1970-01-04", "2026-11-23", "2026-11-29", "2026-11-30", "2026-03-29"].map(weekOf), [0, -1, 2968, 2968, 2969, 2933]);
+assert.deepStrictEqual(["bench", "row", "Lift 1", "Lift 2", ""].map(phaseOf), [0.364328624214977, 0.6921157399192452, 0.4017844588961452, 0.5268021458759904, 0.6689221884589642]);
+assert.deepStrictEqual([[8, 12], [5, 8], [6, 10], [10, 15], [3, 6], [8, 9], [8, 8]].map(([min, max]) => PROGRESSIONS.map((p) => triggerReps(p, min, max)).join("|")),
+  ["12|11|10", "8|7|6", "10|9|8", "15|14|12", "6|5|4", "9|9|8", "8|8|8"]);
+assert.deepStrictEqual([0.2, 0.4, 0.8, 1.6].map((r) => dueUnits(r, weekOf("2026-11-23"), phaseOf("bench"))), [0, 1, 1, 2]);
+assert.strictEqual(dueUnits(0.2, weekOf("1969-12-29"), phaseOf("bench")), 0);
+assert.deepStrictEqual([[100, 2.5], [100, 1.25], [17.5, 2.5], [15, 1.25], [230, 10], [315, 5]].map(([w, i]) => `${Math.round(stepCost(w, i) * 1e4) / 1e4}/${weightFirst(w, i)}`),
+  ["1/false", "0.5/true", "1/false", "0.5556/true", "1.7391/false", "0.6349/true"]);
+// Key lines (exercise "bench").
+assert.strictEqual(ns(17.5, 9, 6, 9, "moderate", 2.5, "2026-11-30"), "20x8"); // the user's points
+assert.strictEqual(ns(15, 8, 5, 8, "moderate", 5, "2026-11-30"), "20x6");
+assert.strictEqual(ns(100, 7, 8, 12, "light", 2.5, "2026-11-23"), "100x8"); // under the range: +1 every session
+assert.deepStrictEqual(["2026-11-23", "2026-12-07"].map((d) => ns(0, 12, 8, 12, "light", 2.5, d)), ["0x12", "0x13"]); // bodyweight
+assert.strictEqual(ns(235, 4, 5, 8, "aggressive", 5, "2026-11-23"), "235x5"); // a miss
+assert.strictEqual(ns(100, 12, 8, 12, "light", 2.5, "2026-11-23"), "102.5x11"); // at the top: jump in any week
+assert.deepStrictEqual(["aggressive", "moderate"].map((p) => ns(95, 10, 8, 12, p, 2.5, "2026-11-23")), ["97.5x10", "95x11"]); // early jump
+assert.strictEqual(ns(20, 10, 8, 12, "aggressive", 10, "2026-11-23"), "20x11"); // early jump would land under the range
+assert.strictEqual(ns(225, 8, 8, 9, "aggressive", 5, "2026-11-23"), "225x9"); // weight-first at the bottom
+assert.deepStrictEqual(["2026-11-30", "2026-11-23"].map((d) => ns(20, 20, 8, 12, "moderate", 2.5, d)), ["22.5x12", "22.5x12"]); // overshoot: one step
+assert.strictEqual(ns(100, 15, 8, 12, "moderate", 2.5, "2026-11-30"), "102.5x12");
+assert.deepStrictEqual(["2026-11-30", "2026-11-23"].map((d) => ns(225, 12, 5, 8, "moderate", 5, d)), ["230x8", "230x8"]); // max(due, 1), not due + 1
+assert.strictEqual(ns(225, 12, 5, 8, "aggressive", 1.25, "2026-11-23"), "230x8");
+assert.strictEqual(ns(20, 13, 8, 12, "moderate", 10, "2026-11-23"), "30x10");
+assert.strictEqual(ns(10, 16, 10, 15, "moderate", 10, "2026-11-30"), "10x16"); // a step would land under the range
+assert.deepStrictEqual(["2026-11-30", "2026-11-23"].map((d) => ns(10, 17, 10, 15, "moderate", 10, d)), ["20x10", "20x11"]);
+assert.throws(() => nextSet(set(100, 10), 8, 12, "moderate", 2.5), TypeError);
+assert.throws(() => nextSet(set(100, 10), 8, 12, "moderate", 2.5, weekOf("2026-11-23")), TypeError);
+assert.throws(() => nextSet(set(100, 10), 8, 12, "moderate", 2.5, undefined, 0.5), TypeError); // a phase but no week
+assert.strictEqual(ns(10.2, 12, 8, 12, "moderate", 1.1, "2026-11-23"), "11.3x12"); // rounded to 0.001 (10.2 + 1.1 is 11.299999999999999)
+assert.strictEqual(ns(10, 5, 1, 5, "moderate", 10, "2026-11-30"), "20x1"); // reps never under 1
+// F3: a log from the target's own calendar week has no units due.
+assert.strictEqual(nextSet(set(100, 10), 8, 12, "moderate", 2.5, 2968, phaseOf("bench"), 2968).reps, 10);
+assert.strictEqual(nextSet(set(100, 10), 8, 12, "moderate", 2.5, 2968, phaseOf("bench"), 2967).reps, 11);
+// The version 34 lines on each of the five dates.
+for (const [args, want] of [
+  [[100, 8, 8, 12, "moderate", 2.5], "100x9 100x8 100x9 100x8 100x8"],
+  [[95, 12, 8, 12, "moderate", 2.5], "97.5x12 97.5x11 97.5x12 97.5x11 97.5x11"],
+  [[95, 12, 8, 12, "light", 2.5], "97.5x11 97.5x11 97.5x12 97.5x11 97.5x11"],
+  [[95, 10, 8, 12, "aggressive", 2.5], "97.5x10 97.5x10 97.5x10 97.5x10 97.5x9"],
+  [[95, 10, 8, 12, "moderate", 2.5], "95x11 95x10 95x11 95x10 95x10"],
+  [[225, 8, 5, 8, "moderate", 5], "230x8 225x8 230x8 225x8 225x8"],
+  [[225, 8, 5, 8, "moderate", 2.5], "227.5x8 227.5x8 227.5x8 227.5x8 227.5x8"],
+  [[225, 8, 5, 8, "light", 2.5], "227.5x8 225x8 227.5x8 225x8 225x8"],
+  [[225, 7, 5, 8, "aggressive", 5], "230x7 230x7 230x7 230x7 230x7"],
+  [[20, 12, 8, 12, "light", 5], "25x10 25x10 25x11 25x10 25x10"],
+  [[20, 12, 8, 12, "moderate", 5], "25x11 25x10 25x11 25x10 25x10"],
+  [[20, 12, 8, 12, "aggressive", 5], "25x11 25x11 25x11 25x11 25x10"],
+  [[20, 12, 8, 12, "moderate", 10], "30x9 30x8 30x9 30x8 30x8"],
+  [[20, 10, 8, 12, "moderate", 10], "20x11 20x10 20x11 20x10 20x10"],
+  [[10, 15, 10, 15, "moderate", 10], "10x16 10x15 10x16 10x15 10x15"],
+  [[10, 16, 10, 15, "moderate", 10], "20x10 10x16 20x10 10x16 10x16"],
+  [[10, 17, 10, 15, "moderate", 10], "20x11 20x10 20x11 20x10 20x10"],
+  [[60, 12, 8, 12, "moderate", 5], "65x11 65x10 65x11 65x10 65x10"],
+  [[235, 4, 5, 8, "moderate", 5], "235x5 235x5 235x5 235x5 235x5"],
+  [[100, 15, 8, 12, "moderate", 2.5], "102.5x12 102.5x12 102.5x12 102.5x12 102.5x12"],
+  [[17.5, 9, 6, 9, "moderate", 2.5], "20x9 20x8 20x9 20x8 20x8"],
+  [[15, 8, 5, 8, "moderate", 5], "20x7 20x6 20x7 20x6 20x6"],
+  [[0, 12, 8, 12, "moderate", 2.5], "0x13 0x12 0x13 0x12 0x12"],
+]) assert.strictEqual(DATES.map((d) => ns(...args, d)).join(" "), want, args.join());
+// The dated tables: light | moderate | aggressive, each on the five dates.
+const TABLE = `20x10 8-12 /2.5 | 20x10 20x10 20x11 20x10 20x10 | 20x11 20x10 20x11 20x10 20x10 | 22.5x10 22.5x10 22.5x10 22.5x10 22.5x9
+20x10 8-12 /5 | 20x10 20x10 20x11 20x10 20x10 | 20x11 20x10 20x11 20x10 20x10 | 25x9 25x9 25x9 25x9 25x8
+20x12 8-12 /2.5 | 22.5x11 22.5x11 22.5x12 22.5x11 22.5x11 | 22.5x12 22.5x11 22.5x12 22.5x11 22.5x11 | 22.5x12 22.5x12 22.5x12 22.5x12 22.5x11
+20x12 8-12 /5 | 25x10 25x10 25x11 25x10 25x10 | 25x11 25x10 25x11 25x10 25x10 | 25x11 25x11 25x11 25x11 25x10
+60x10 8-12 /2.5 | 60x10 60x10 60x11 60x10 60x10 | 60x11 60x10 60x11 60x10 60x10 | 62.5x10 62.5x10 62.5x10 62.5x10 62.5x9
+60x10 8-12 /5 | 60x10 60x10 60x11 60x10 60x10 | 60x11 60x10 60x11 60x10 60x10 | 65x9 65x9 65x9 65x9 65x8
+60x12 8-12 /2.5 | 62.5x11 62.5x11 62.5x12 62.5x11 62.5x11 | 62.5x12 62.5x11 62.5x12 62.5x11 62.5x11 | 62.5x12 62.5x12 62.5x12 62.5x12 62.5x11
+60x12 8-12 /5 | 65x10 65x10 65x11 65x10 65x10 | 65x11 65x10 65x11 65x10 65x10 | 65x11 65x11 65x11 65x11 65x10
+95x8 6-10 /2.5 | 95x8 95x8 95x9 95x8 95x8 | 95x9 95x8 95x9 95x8 95x8 | 97.5x8 97.5x8 97.5x8 97.5x8 97.5x7
+95x8 6-10 /5 | 95x8 95x8 95x9 95x8 95x8 | 95x9 95x8 95x9 95x8 95x8 | 100x7 100x7 100x7 100x7 100x6
+95x10 6-10 /2.5 | 97.5x9 97.5x9 97.5x10 97.5x9 97.5x9 | 97.5x10 97.5x9 97.5x10 97.5x9 97.5x9 | 97.5x10 97.5x10 97.5x10 97.5x10 97.5x9
+95x10 6-10 /5 | 100x8 100x8 100x9 100x8 100x8 | 100x9 100x8 100x9 100x8 100x8 | 100x9 100x9 100x9 100x9 100x8
+135x10 8-12 /2.5 | 135x10 135x10 137.5x10 135x10 135x10 | 137.5x10 135x10 137.5x10 137.5x10 135x10 | 137.5x10 137.5x10 140x10 137.5x10 137.5x10
+135x10 8-12 /5 | 135x10 135x10 135x11 135x10 135x10 | 135x11 135x10 135x11 135x10 135x10 | 140x10 140x10 140x10 140x10 140x9
+135x12 8-12 /2.5 | 135x12 135x12 137.5x12 135x12 135x12 | 137.5x12 135x12 137.5x12 137.5x12 135x12 | 137.5x12 137.5x12 140x12 137.5x12 137.5x12
+135x12 8-12 /5 | 140x11 140x11 140x12 140x11 140x11 | 140x12 140x11 140x12 140x11 140x11 | 140x12 140x12 140x12 140x12 140x11
+185x10 8-12 /2.5 | 187.5x10 185x10 187.5x10 185x10 185x10 | 187.5x10 187.5x10 187.5x10 187.5x10 185x10 | 190x10 187.5x10 190x10 190x10 187.5x10
+185x10 8-12 /5 | 185x10 185x10 185x11 185x10 185x10 | 185x11 185x10 185x11 185x10 185x10 | 190x10 190x10 190x10 190x10 190x9
+185x12 8-12 /2.5 | 187.5x12 185x12 187.5x12 185x12 185x12 | 187.5x12 187.5x12 187.5x12 187.5x12 185x12 | 190x12 187.5x12 190x12 190x12 187.5x12
+185x12 8-12 /5 | 190x11 190x11 190x12 190x11 190x11 | 190x12 190x11 190x12 190x11 190x11 | 190x12 190x12 190x12 190x12 190x11
+225x6 5-8 /2.5 | 227.5x6 225x6 227.5x6 225x6 225x6 | 227.5x6 227.5x6 227.5x6 227.5x6 227.5x6 | 230x6 230x6 230x6 230x6 227.5x6
+225x6 5-8 /5 | 225x6 225x6 230x6 225x6 225x6 | 230x6 225x6 230x6 225x6 225x6 | 230x6 230x6 230x6 230x6 230x6
+225x8 5-8 /2.5 | 227.5x8 225x8 227.5x8 225x8 225x8 | 227.5x8 227.5x8 227.5x8 227.5x8 227.5x8 | 230x8 230x8 230x8 230x8 227.5x8
+225x8 5-8 /5 | 225x8 225x8 230x8 225x8 225x8 | 230x8 225x8 230x8 225x8 225x8 | 230x8 230x8 230x8 230x8 230x8
+315x4 3-6 /2.5 | 317.5x4 315x4 317.5x4 317.5x4 315x4 | 317.5x4 317.5x4 320x4 317.5x4 317.5x4 | 322.5x4 320x4 322.5x4 322.5x4 320x4
+315x4 3-6 /5 | 320x4 315x4 320x4 315x4 315x4 | 320x4 315x4 320x4 320x4 315x4 | 320x4 320x4 325x4 320x4 320x4
+315x6 3-6 /2.5 | 317.5x6 315x6 317.5x6 317.5x6 315x6 | 317.5x6 317.5x6 320x6 317.5x6 317.5x6 | 322.5x6 320x6 322.5x6 322.5x6 320x6
+315x6 3-6 /5 | 320x6 315x6 320x6 315x6 315x6 | 320x6 315x6 320x6 320x6 315x6 | 320x6 320x6 325x6 320x6 320x6`;
+const ROW_TABLE = `60x10 8-12 /2.5 | 60x10 60x10 60x10 60x11 60x10 | 60x10 60x11 60x10 60x11 60x10 | 62.5x9 62.5x10 62.5x10 62.5x10 62.5x10
+60x10 8-12 /5 | 60x10 60x10 60x10 60x11 60x10 | 60x10 60x11 60x10 60x11 60x10 | 65x8 65x9 65x9 65x9 65x9
+135x10 8-12 /2.5 | 135x10 135x10 135x10 137.5x10 135x10 | 135x10 137.5x10 135x10 137.5x10 137.5x10 | 137.5x10 137.5x10 137.5x10 137.5x10 137.5x10
+135x10 8-12 /5 | 135x10 135x10 135x10 135x11 135x10 | 135x10 135x11 135x10 135x11 135x10 | 140x9 140x10 140x10 140x10 140x10
+225x6 5-8 /2.5 | 225x6 227.5x6 225x6 227.5x6 225x6 | 225x6 227.5x6 227.5x6 227.5x6 227.5x6 | 227.5x6 230x6 230x6 230x6 230x6
+225x6 5-8 /5 | 225x6 225x6 225x6 230x6 225x6 | 225x6 230x6 225x6 230x6 225x6 | 225x6 230x6 230x6 230x6 230x6`;
+for (const [id, table] of [["bench", TABLE], ["row", ROW_TABLE]]) {
+  for (const line of table.split("\n")) {
+    const [, w, r, min, max, inc, ...cols] = line.match(/^([\d.]+)x(\d+) (\d+)-(\d+) \/([\d.]+) \| (.*) \| (.*) \| (.*)$/);
+    PROGRESSIONS.forEach((p, k) => assert.strictEqual(DATES.map((d) => ns(+w, +r, +min, +max, p, +inc, d, id)).join(" "), cols[k], `${id} ${line} ${p}`));
+  }
+}
+// nextSets: the set-1 group.
+const nss = (sets, min, max, inc, date, firstWeights = sets.map(() => sets[0][0])) =>
+  fmt(nextSets(sets.map(([w, r]) => set(w, r)), firstWeights, min, max, "moderate", inc, weekOf(date), phaseOf("bench")));
+assert.deepStrictEqual(nss([[185, 12], [185, 10], [185, 9]], 8, 12, 2.5, "2026-11-23"), ["187.5x12", "187.5x10", "187.5x9"]);
+assert.deepStrictEqual(nss([[185, 11], [185, 9], [185, 8]], 8, 12, 2.5, "2026-11-23"), ["185x12", "185x10", "185x9"]);
+assert.deepStrictEqual(nss([[60, 12], [60, 10], [60, 9]], 8, 12, 5, "2026-11-30"), ["65x10", "65x8", "65x7"]);
+assert.deepStrictEqual(nss([[60, 12], [60, 10], [60, 9]], 8, 12, 5, "2026-11-23"), ["65x11", "65x9", "65x8"]);
+assert.deepStrictEqual(nss([[100, 11], [100, 13], [100, 12]], 8, 12, 2.5, "2026-11-23"), ["102.5x11", "102.5x12", "102.5x12"]);
+assert.deepStrictEqual(nss([[10, 15], [10, 13], [10, 12]], 10, 15, 10, "2026-11-23"), ["10x16", "10x14", "10x13"]);
+assert.deepStrictEqual(nss([[185, 7], [185, 9], [185, 6]], 8, 12, 2.5, "2026-11-23"), ["185x8", "185x9", "185x7"]);
+assert.deepStrictEqual(nss([[0, 12], [0, 10], [0, 7]], 8, 12, 2.5, "2026-11-23"), ["0x13", "0x11", "0x8"]);
+assert.deepStrictEqual(nss([[185, 11], [185, 9], [135, 12]], 8, 12, 2.5, "2026-11-23"), ["187.5x11", "187.5x9", "137.5x12"]);
+// A straight set from an older workout at another weight (firstWeights[2] = its own weight there).
+assert.deepStrictEqual(["2026-11-30", "2026-11-23"].map((d) => nss([[250, 8], [250, 7], [245, 6]], 8, 12, 2.5, d, [250, 250, 245])), [["250x8", "250x8", "250x5"], ["250x9", "250x8", "250x6"]]);
+assert.deepStrictEqual(nss([[35, 10], [35, 9], [20, 12]], 8, 12, 5, "2026-11-30", [35, 35, 20]), ["35x10", "35x9", "35x-"]); // costs 6 reps
+assert.deepStrictEqual(nss([[30, 10], [30, 9], [20, 12]], 8, 12, 5, "2026-11-30", [30, 30, 20]), ["30x10", "30x9", "30x8"]); // exactly 4: a number
+assert.deepStrictEqual(nss([[32.5, 10], [32.5, 9], [20, 12]], 8, 12, 2.5, "2026-11-30", [32.5, 32.5, 20]), ["32.5x10", "32.5x9", "32.5x-"]); // 5 reps: over the limit
+assert.deepStrictEqual(nss([[10, 22], [10, 20], [10, 19]], 10, 15, 10, "2026-11-30"), ["20x15", "20x13", "20x12"]); // logged with set 1: always a number
+assert.deepStrictEqual(nss([[185, 12], [185, 10], [150, 9]], 8, 12, 2.5, "2026-11-23", [185, 185, 150]), ["187.5x12", "187.5x10", "187.5x-"]);
+// A drop set (alone) whose own log is from the target's week: no units due.
+const dropWeek = (w3) => fmt(nextSets([set(185, 11), set(185, 9), set(135, 12)], [185, 185, 185], 8, 12, "moderate", 2.5, weekOf("2026-11-23"), phaseOf("bench"), [2967, 2967, w3]));
+assert.deepStrictEqual([2968, 2967].map(dropWeek), [["187.5x11", "187.5x9", "135x12"], ["187.5x11", "187.5x9", "137.5x12"]]);
+assert.deepStrictEqual(nss([[20, 12], [20, 1]], 8, 12, 5, "2026-11-23"), ["25x11", "25x1"]); // a follower's reps never under 1
+assert.deepStrictEqual(nss([[10, 15], [10, 15]], 10, 15, 10, "2026-11-23"), ["10x16", "10x16"]); // capped at set 1's reps past the top
 // The reps placeholder after a weight is typed: at the predicted weight it
 // is the predicted reps, whatever the range.
 assert.deepStrictEqual([[100, 6, 100, 8, 12], [100, 6, 100, 5, 5], [10, 13, 10, 10, 12], [60, 10, 70, 4, 12], [60, 10, 70, 8, 12]].map((a) => hintReps(...a)), [6, 6, 13, 6, 8]);
@@ -274,6 +382,15 @@ assert.deepStrictEqual(getExerciseHistory("b", undefined, "Curl").map((r) => r.d
 // offset 1, -15 is before the start.
 const dayIso = (n) => isoDate(addDays(new Date(), n));
 const todayIso = dayIso(0);
+// Predictions depend on the workout's calendar week: units due for an
+// exercise at moderate (0 or 1), and the first week from a date with that many.
+const dueOn = (iso, id = "bench") => dueUnits(PRESETS.moderate.repsPerWeek, weekOf(iso), phaseOf(id));
+const weekWith = (units, fromIso = todayIso, id = "bench") => {
+  let d = parseLocalDate(fromIso);
+  while (dueOn(isoDate(d), id) !== units) d = addDays(d, 7);
+  return isoDate(d);
+};
+const basesOn = (w, iso, i = 0) => buildEntrySets({ ...w, date: iso }, { ...w.exercises[i], targetSets: w.exercises[i].sets.length }).map((s) => [s.baseWeight, s.baseReps]);
 const slot = (id, exerciseId, order, targetSets = 2) => ({ id, exerciseId, order, targetSets, repRangeMin: 8, repRangeMax: 12, weightIncrementPct: 2.5 });
 const program = () => [
   { id: "A", name: "Push", weekdayOffset: 0, exercises: [slot("s1", "bench", 0), slot("s2", "row", 1)] },
@@ -318,7 +435,8 @@ seed(program(), [{ ...unfinished("old", dayIso(-7), "A", [wex("s1", "bench", "Be
 ctx = at();
 assert.strictEqual(ctx.workout.dayId, "A");
 assert.deepStrictEqual(ctx.workout.exercises.map((e) => [e.slotId, e.exerciseName, e.sets.length]), [["s1", "Bench", 2], ["s2", "Row", 2]]);
-assert.deepStrictEqual(ctx.workout.exercises[0].sets.map((s) => [s.baseWeight, s.baseReps, s.weight]), [[100, 9, null], [100, 8, null]]);
+assert.deepStrictEqual(ctx.workout.exercises[0].sets.map((s) => [s.baseWeight, s.baseReps, s.weight]), [[100, 8 + dueOn(todayIso), null], [100, 8, null]]);
+assert.deepStrictEqual([weekWith(1), weekWith(0)].map((d) => basesOn(ctx.workout, d)), [[[100, 9], [100, 8]], [[100, 8], [100, 8]]]); // set 2 under the range: +1 in any week
 assert.strictEqual(stored().length, 2);
 const afterFirst = localStorage.getItem("fah_workouts");
 assert.strictEqual(at().workout.id, ctx.workout.id);
@@ -646,7 +764,8 @@ localStorage.setItem("fah_workouts", JSON.stringify([
 Store.finishWorkout("w-2026-11-10"); // yesterday's, finished a day late
 refreshPredictions();
 const today11 = Store.getWorkout("w-2026-11-11");
-assert.deepStrictEqual([today11.exercises[0].sets[0].baseWeight, today11.exercises[0].sets[0].baseReps], [105, 9]);
+assert.deepStrictEqual([today11.exercises[0].sets[0].baseWeight, today11.exercises[0].sets[0].baseReps], [105, 8]); // logged the same week: no unit due
+assert.deepStrictEqual(basesOn(today11, "2026-11-23"), [[105, 9]]); // a due week later: the rise
 assert.deepStrictEqual([today11.exercises[1].sets[1].baseWeight, today11.exercises[1].sets[1].baseReps], [1, 1]); // started: left alone
 const refreshed = localStorage.getItem("fah_workouts");
 refreshPredictions();
@@ -753,7 +872,10 @@ seed([{ id: "A", name: "Push", weekdayOffset: 0, exercises: [slot("c1", "curl", 
   { ...unfinished("old", dayIso(-7), "A", [wex("c1", "curl", "Curl", 0, [logged(0, 40, 8), logged(1, 40, 8)]), wex("c2", "curl", "Curl", 1, [logged(0, 25, 10), logged(1, 25, 10)])]), dayName: "Push", finished: true },
 ]);
 const copied = Store.cloneMesocycle("m", todayIso);
-assert.deepStrictEqual(generateWorkout(copied, copied.days[0], dayIso(7)).exercises.map((e) => e.sets.map((s) => [s.baseWeight, s.baseReps])), [[[40, 9], [40, 9]], [[25, 11], [25, 11]]]);
+const copyWeek = generateWorkout(copied, copied.days[0], dayIso(7));
+const u7 = dueOn(dayIso(7), "curl");
+assert.deepStrictEqual(copyWeek.exercises.map((e) => e.sets.map((s) => [s.baseWeight, s.baseReps])), [[[40, 8 + u7], [40, 8 + u7]], [[25, 10 + u7], [25, 10 + u7]]]);
+assert.deepStrictEqual([1, 0].map((u) => [0, 1].map((i) => basesOn(copyWeek, weekWith(u, dayIso(7), "curl"), i))), [[[[40, 9], [40, 9]], [[25, 11], [25, 11]]], [[[40, 8], [40, 8]], [[25, 10], [25, 10]]]]);
 // buildEntrySets (a swap or an added exercise on Today): the same pools and
 // k-th rule. A Row swapped in after one Row in a copy's first Monday takes
 // the old Monday's second Row; the first Row the first; with no day of that
@@ -796,7 +918,8 @@ const swapCase = (entryExtra, sets) => {
 };
 const followed = swapCase({}, [blank(0), blank(1)]);
 assert.deepStrictEqual([followed.exerciseId, followed.exerciseName, followed.order, followed.sets.map((s) => [s.baseWeight, s.baseReps, s.weight, s.reps])],
-  ["row", "Row", 0, [[80, 11, null, null], [80, 11, null, null]]]);
+  ["row", "Row", 0, [[80, 10 + dueOn(todayIso, "row"), null, null], [80, 10 + dueOn(todayIso, "row"), null, null]]]);
+assert.deepStrictEqual([1, 0].map((u) => basesOn(Store.getWorkout("r"), weekWith(u, todayIso, "row"))), [[[80, 11], [80, 11]], [[80, 10], [80, 10]]]);
 assert.strictEqual(swapCase({ swapped: true }, [blank(0), blank(1)]).exerciseId, "bench");
 assert.strictEqual(swapCase({}, [logged(0, 100, 8), blank(1)]).exerciseId, "bench");
 assert.strictEqual(tampered((b) => { b.workouts[0].exercises[0].swapped = true; }), null);
@@ -815,9 +938,11 @@ seed(program(), [
 ]);
 reconcileWorkoutWithTemplate(Store.getWorkout("r"), { id: "A", name: "Push", exercises: [slot("s1", "bench", 0, 3), slot("s2", "row", 1, 3)] });
 assert.deepStrictEqual(Store.getWorkout("r").exercises.map((e) => [e.exerciseId, e.sets]), [
-  ["bench", [logged(0, 100, 9), { ...blank(1), baseWeight: 100, baseReps: 9 }, { ...blank(2), baseWeight: 95, baseReps: 9 }]],
-  ["curl", [blank(0), { ...blank(1), baseWeight: 30, baseReps: 11 }, { ...blank(2), baseWeight: 25, baseReps: 11 }]],
+  ["bench", [logged(0, 100, 9), { ...blank(1), baseWeight: 100, baseReps: 8 + dueOn(todayIso) }, { ...blank(2), baseWeight: 95, baseReps: 8 + dueOn(todayIso) }]],
+  ["curl", [blank(0), { ...blank(1), baseWeight: 30, baseReps: 10 + dueOn(todayIso, "curl") }, { ...blank(2), baseWeight: 25, baseReps: 10 + dueOn(todayIso, "curl") }]],
 ]);
+assert.deepStrictEqual([1, 0].map((u) => basesOn(Store.getWorkout("r"), weekWith(u))), [[[100, 9], [100, 9], [95, 9]], [[100, 8], [100, 8], [95, 8]]]);
+assert.deepStrictEqual([1, 0].map((u) => basesOn(Store.getWorkout("r"), weekWith(u, todayIso, "curl"), 1)), [[[30, 11], [30, 11], [25, 11]], [[30, 10], [30, 10], [25, 10]]]);
 
 // --- Legacy sets: a carried weight, and a reopened workout ---
 seed(program(), [unfinished("cw", todayIso, "A", [wex("s1", "bench", "Bench", 0, [
@@ -931,6 +1056,14 @@ for (const step of [0, -5]) { // 0 or less: no value (the 2.5 default)
   assert.strictEqual("minIncrement" in Store.getExercises()[0], false, String(step));
 }
 assert.strictEqual(badFeature((b) => { for (const s of b.mesocycles[0].days[0].exercises) { delete s.progression; s.weightIncrementPct = 5; } }), null); // weightIncrementPct only
+// A predicted weight with no rep target (a group set whose conversion costs
+// too many reps) is valid and survives an import unchanged.
+const weightOnly = JSON.parse(JSON.stringify(featureBackup));
+const weightOnlySet = { setIndex: 0, weight: null, reps: null, baseWeight: 187.5, baseReps: null, isLogged: false, done: false };
+weightOnly.workouts[0].exercises[0].sets[0] = weightOnlySet;
+assert.strictEqual(validateBackup(weightOnly), null);
+assert.strictEqual(Store.importBackup(JSON.parse(JSON.stringify(weightOnly))), true);
+assert.deepStrictEqual(Store.getWorkout(weightOnly.workouts[0].id).exercises[0].sets[0], weightOnlySet);
 
 // --- Presets and the minimum step: predictions ---
 // A step change reaches an untouched prediction through refreshPredictions.
@@ -959,7 +1092,114 @@ localStorage.setItem("fah_workouts", JSON.stringify([
 ]));
 reconcileWorkoutWithTemplate(Store.getWorkout("r"), { id: "A", name: "x", exercises: [{ ...slot("s1", "bench", 0, 1), progression: "aggressive" }, { ...slot("s2", "row", 1, 1), progression: "aggressive" }] });
 assert.deepStrictEqual(Store.getWorkout("r").exercises.map((e) => [e.progression, e.sets[0].baseWeight, e.sets[0].baseReps, e.sets[0].weight]),
-  [["aggressive", 100, 8, null], ["aggressive", 80, 11, 80]]);
+  [["aggressive", 97.5, 10, null], ["aggressive", 80, 11, 80]]); // aggressive jumps from 10 of 8-12 (moderate: 95x10 or 95x11)
+
+// --- The set-1 group and the calendar week, through buildPrefilledSets ---
+// (coach's spec-lines.txt sections 2 and 4). Bench 8-12 moderate, step
+// 2.5, day A, slot sA; a moderate unit is due for "bench" on 2026-11-23,
+// none on 2026-11-30.
+seed(program());
+const benchSlot = (targetSets = 3) => ({ id: "sA", exerciseId: "bench", targetSets, repRangeMin: 8, repRangeMax: 12, progression: "moderate" });
+const B = (...sets) => ex("sA", "bench", "Bench", ...sets.map((s) => (s ? set(...s) : set(null, null))));
+const predict = (history, date = "2026-11-23", targetSets = 3, dayId = "A", dayName = null) =>
+  buildPrefilledSets(benchSlot(targetSets), history, dayId, date, "Bench", dayName).map((s) => s.baseWeight == null ? null : `${s.baseWeight}x${s.baseReps ?? "-"}`);
+const on16 = (...sets) => [workout("2026-11-16", "A", [B(...sets)])];
+assert.deepStrictEqual(predict(on16([185, 12], [185, 10], [185, 9])), ["187.5x12", "187.5x10", "187.5x9"]); // 1: one step for the group
+assert.deepStrictEqual(predict(on16([185, 11], [185, 9], [185, 8])), ["185x12", "185x10", "185x9"]); // 1b: set 3 at the bottom: reps
+assert.deepStrictEqual(predict(on16([185, 11], [185, 9], [135, 12])), ["187.5x11", "187.5x9", "137.5x12"]); // 2: drop set alone
+assert.deepStrictEqual(predict(on16([135, 12], [155, 10], [175, 8])), ["137.5x12", "157.5x10", "175x9"]); // 3: pyramid
+assert.deepStrictEqual(predict(on16(null, [185, 10], [185, 9])), [null, "187.5x10", "187.5x9"]); // 4: no set 1
+// Set 1 logged with no reps is no set 1 for the group: set 2 goes alone
+// (in the group it would follow set 1's older 95x12 to 97.5x12).
+assert.deepStrictEqual(predict([workout("2026-11-16", "A", [B([100, null], [100, 10])]), workout("2026-11-09", "A", [B([95, 12])])], "2026-11-23", 2), ["97.5x12", "100x11"]);
+const fellBack = (third) => [workout("2026-11-16", "A", [B([185, 12], [185, 10], null)]), workout("2026-11-09", "A", [B([182.5, 12], [182.5, 10], third)])];
+assert.deepStrictEqual(predict(fellBack([182.5, 9])), ["187.5x12", "187.5x10", "187.5x8"]); // 5: was straight there: joins
+assert.deepStrictEqual(predict(fellBack([182.5, 8])), ["187.5x12", "187.5x10", "187.5x7"]); // 5c: joins, its honest reps under the range
+assert.deepStrictEqual(predict(fellBack([135, 12])), ["187.5x12", "187.5x10", "137.5x12"]); // 5b: was a drop set there: alone
+const straightAt = (x) => [workout("2026-11-16", "A", [B([185, 12], [185, 10], null)]), workout("2026-11-09", "A", [B([x, 12], [x, 10], [x, 9])])];
+// A straight set always joins; converted more than MAX_CONVERT_REPS (4) reps
+// from another weight than set 1's last, it gets the weight and no rep target.
+assert.deepStrictEqual([180, 175, 150].map((x) => predict(straightAt(x))[2]), ["187.5x8", "187.5x7", "187.5x-"]); // 150: 5d
+assert.deepStrictEqual(predict([workout("2026-11-16", "A", [B([185, 10], [185, 8], null)]), workout("2026-11-09", "A", [B([187.5, 7], [187.5, 6], [187.5, 5])])]), ["185x11", "185x9", "185x7"]); // a heavier fallback joins too
+// The D1 trace: DB press, 5 lb step; set 3 skipped the session the group went
+// 65 -> 70 falls back to 65x8 and joins at the group's weight.
+localStorage.setItem("fah_exercises", JSON.stringify([{ id: "bench", name: "Bench", minIncrement: 5 }]));
+const d1 = (s1, s2) => [workout("2026-11-16", "A", [B(s1, s2, null)]), workout("2026-11-09", "A", [B([65, 12], [65, 10], [65, 8])])];
+assert.deepStrictEqual(predict(d1([70, 10], [70, 8])), ["70x11", "70x9", "70x7"]); // due week
+assert.deepStrictEqual(predict(d1([70, 10], [70, 8]), "2026-11-30"), ["70x10", "70x8", "70x6"]); // no unit
+assert.deepStrictEqual(predict(d1([70, 12], [70, 10])), ["75x11", "75x9", "75x5"]); // jump week
+// A 10 lb gap from 17 to 100 lb costs exactly 4 reps, which float error puts
+// just above 4 (60 -> 70, 45 -> 55): still a rep target (the 1e-9 guard).
+const gap = (from, to) => [workout("2026-11-16", "A", [B([to, 10], [to, 8], null)]), workout("2026-11-09", "A", [B([from, 12], [from, 10], [from, 10])])];
+assert.deepStrictEqual(["2026-11-23", "2026-11-30"].map((d) => predict(gap(60, 70), d)), [["70x11", "70x9", "70x7"], ["70x10", "70x8", "70x6"]]);
+assert.deepStrictEqual(["2026-11-23", "2026-11-30"].map((d) => predict(gap(45, 55), d)), [["55x11", "55x9", "55x7"], ["55x10", "55x8", "55x6"]]);
+seed(program());
+// Set 1 is never asked below its last weight; set 2 follows it down.
+assert.deepStrictEqual(predict([workout("2026-11-16", "A", [B([150, 10], null)]), workout("2026-11-09", "A", [B([200, 10], [200, 10])])], "2026-11-23", 2), ["152.5x10", "152.5x12"]);
+// Calendar weeks: a week's unit counts once, skipped weeks are not caught up.
+assert.deepStrictEqual(predict(on16([100, 9]), "2026-11-23", 1), ["100x10"]);
+assert.deepStrictEqual(predict([workout("2026-11-23", "A", [B([100, 10])])], "2026-11-30", 1), ["100x10"]);
+assert.deepStrictEqual(predict(on16([100, 10]), "2026-11-30", 1), ["100x10"]); // 2026-11-23 skipped
+// A new Thursday day falling back to Monday's log of the same week matches
+// it (at 11 the jump alone), instead of asking the week's unit again.
+const monday = (...sets) => [{ ...workout("2026-11-23", "A", [B(...sets)]), dayName: "Mon" }];
+assert.deepStrictEqual(["10", "11"].map((r) => predict(monday([100, +r]), "2026-11-26", 1, "T", "Thu")[0]), ["100x10", "102.5x10"]);
+assert.deepStrictEqual(predict(monday([185, 11], [185, 9], [185, 8]), "2026-11-26", 3, "T", "Thu"), ["185x11", "185x9", "185x8"]);
+assert.deepStrictEqual(predict(monday([185, 12], [185, 10], [185, 9]), "2026-11-26", 3, "T", "Thu"), ["185x12", "185x10", "185x9"]);
+assert.deepStrictEqual(predict(monday([100, 15]), "2026-11-26", 1, "T", "Thu"), ["102.5x12"]); // the overshoot step still applies
+// Per set: set 3 falls back to this week's Monday and matches it; sets 1-2
+// (last Thursday) get the week's unit.
+assert.deepStrictEqual(predict([workout("2026-11-19", "T", [B([100, 10], [100, 9])]), ...monday([100, 10], [100, 9], [100, 8])], "2026-11-26", 3, "T"), ["100x11", "100x10", "100x8"]);
+// The phase key is the library exercise's id, also for an entry with no id
+// ("Bench" as a key would give a unit on 2026-12-21, "bench" none).
+assert.deepStrictEqual([{ exerciseId: "bench" }, { exerciseId: undefined }].map((s) => buildPrefilledSets({ ...benchSlot(1), ...s }, on16([100, 9]), "A", "2026-12-21", "Bench")[0].baseReps), [9, 9]);
+// A makeup in the week of that day's next session: the unit counts once.
+const thu12 = workout("2026-11-12", "T", [B([100, 10])]);
+assert.deepStrictEqual(predict([thu12], "2026-11-24", 1, "T"), ["100x11"]); // the makeup (Tue) itself
+assert.deepStrictEqual(predict([thu12, { ...workout("2026-11-24", "T", [B([100, 10])]), makeup: true, makeupFor: "2026-11-19" }], "2026-11-26", 1, "T"), ["100x10"]);
+
+// Through generateWorkout: the weight with no rep target is stored as
+// baseReps null, and refreshPredictions keeps it.
+seed([{ id: "A", name: "Push", weekdayOffset: 0, exercises: [slot("s1", "bench", 0, 3)] }], [
+  { ...workout("2026-11-16", "A", [ex("s1", "bench", "Bench", set(185, 12), set(185, 10), set(null, null))]), id: "h2" },
+  { ...workout("2026-11-09", "A", [ex("s1", "bench", "Bench", set(150, 12), set(150, 10), set(150, 9))]), id: "h1" },
+]);
+const farSet = generateWorkout(Store.getActiveMesocycle(), Store.getActiveMesocycle().days[0], "2026-11-23");
+const farBases = () => Store.getWorkout(farSet.id).exercises[0].sets.map((s) => [s.baseWeight, s.baseReps]);
+assert.deepStrictEqual(farBases(), [[187.5, 12], [187.5, 10], [187.5, null]]);
+refreshPredictions();
+assert.deepStrictEqual(farBases(), [[187.5, 12], [187.5, 10], [187.5, null]]);
+
+// A date that gives no week never throws (refreshPredictions runs at
+// startup): blank sets, no prediction.
+seed(program(), [
+  { ...workout("2026-11-16", "A", [ex("s1", "bench", "Bench", set(100, 10))]), id: "h" },
+  unfinished("bad", "2026-13-01", "A", [wex("s1", "bench", "Bench", 0, [{ ...blank(0), baseWeight: 1, baseReps: 1 }])]),
+]);
+refreshPredictions();
+assert.deepStrictEqual(Store.getWorkout("bad").exercises[0].sets, [blank(0)]);
+assert.deepStrictEqual(predict(on16([100, 10]), "2026-13-01", 1), [null]);
+// The phase follows the library exercise: an entry with no exerciseId gets
+// the same sets on every path, and a rename does not move it ("Bench" as a
+// key has no unit due on 2026-11-23, "Press" has one on 2026-12-14).
+const phaseHistory = [{ ...workout("2026-11-16", "A", [ex("s1", "bench", "Bench", set(100, 10), set(100, 10))]), id: "h", dayName: "Push" }];
+const noId = (date, name = "Bench") => unfinished("u", date, "A", [wex("s1", undefined, name, 0, [{ ...blank(0), baseWeight: 1, baseReps: 1 }, blank(1)])], { dayName: "Push" });
+const bases = (w) => w.exercises[0].sets.map((s) => [s.baseWeight, s.baseReps]);
+seed(program(), phaseHistory);
+assert.deepStrictEqual(bases(generateWorkout(Store.getActiveMesocycle(), program()[0], "2026-11-23")), [[100, 11], [100, 11]]);
+seed(program(), [...phaseHistory, noId("2026-11-23")]);
+assert.deepStrictEqual(basesOn(Store.getWorkout("u"), "2026-11-23"), [[100, 11], [100, 11]]);
+refreshPredictions();
+assert.deepStrictEqual(bases(Store.getWorkout("u")), [[100, 11], [100, 11]]);
+// Reconcile: kept as the entry's own (swapped), so the set added by a raised
+// set count is predicted from the entry itself.
+seed(program(), [...phaseHistory, unfinished("u", "2026-11-23", "A", [wex("s1", undefined, "Bench", 0, [blank(0)], { swapped: true })], { dayName: "Push" })]);
+reconcileWorkoutWithTemplate(Store.getWorkout("u"), { ...program()[0], exercises: [slot("s1", "bench", 0, 2)] });
+assert.deepStrictEqual(Store.getWorkout("u").exercises[0].exerciseId, undefined);
+assert.deepStrictEqual(bases(Store.getWorkout("u"))[1], [100, 11]);
+seed(program(), [...phaseHistory, noId("2026-12-14")]);
+Store.updateExercise("bench", { name: "Press" });
+assert.deepStrictEqual(basesOn({ ...Store.getWorkout("u"), exercises: [{ ...Store.getWorkout("u").exercises[0], exerciseName: "Press" }] }, "2026-12-14"), [[100, 10], [100, 10]]);
 
 // --- Missed day on consecutive training days (the user's case): train Mon
 // to Fri, miss Monday, do it Tuesday and shift the rest of the week along ---

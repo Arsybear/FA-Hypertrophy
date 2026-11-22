@@ -690,9 +690,10 @@ export function handleTodayAction(action, btn, view) {
 // values — only what the user typed is — so a glance at the table shows
 // which sets are actually done. Once a weight is in (typed or carried), the
 // reps hint becomes the estimated rep target at that weight (hintReps): held
-// to the rep range, widened to take in the predicted reps, which nextSet puts
-// outside the range on purpose (one rep past the top when the step is too
-// big, logged reps + 1 after a missed set). So at the predicted weight the
+// to the rep range, widened to take in the predicted reps, which nextSet can
+// put outside the range on purpose (under it, one more rep each session
+// after a missed set; past the top until a weight step lands; bodyweight
+// with no cap). So at the predicted weight the
 // hint is the prediction, and a tick saves what the placeholder showed.
 export function setWeightHint(s) {
   return s.baseWeight ?? "wt";

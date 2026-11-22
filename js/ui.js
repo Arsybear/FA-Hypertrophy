@@ -90,11 +90,12 @@ export function renderProgressionSelect(dataRole, dataAttrs = "", selected = DEF
   </select>`;
 }
 
-// What each preset does, in the user's terms (see nextSet in progression.js).
+// What each preset does, in the user's terms: a pace in reps, which heavy
+// lifts get as small weight steps (see nextSet in progression.js).
 export const PRESET_HELP = `<ul class="preset-help muted">
-  <li>Light: fill the rep range, then add the smallest step.</li>
-  <li>Moderate: fill the rep range, then add about 2.5 %.</li>
-  <li>Aggressive: add weight from the middle of the range, about 5 % at a time.</li>
+  <li>Light: one more rep about every five weeks, or its worth in weight. A pace you can keep for years.</li>
+  <li>Moderate: one more rep every two to three weeks, or its worth in weight. The average pace of a trained lifter.</li>
+  <li>Aggressive: four more reps about every five weeks, or their worth in weight. Expect more missed targets.</li>
 </ul>`;
 
 // The "Min step (lb)" box: the library exercise's minIncrement, one value

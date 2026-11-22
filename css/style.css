@@ -416,11 +416,12 @@ label input, label select { margin-top: 4px; }
 
 /* What the progression presets do: under the select in the add forms, and
    behind one collapsed line at the top of Program. */
-.preset-help { margin: 0 0 10px; padding-left: 18px; font-size: 12px; line-height: 1.45; }
-.preset-help li + li { margin-top: 2px; }
+.preset-help { margin: 0 0 8px; padding-left: 18px; font-size: 12px; line-height: 1.35; }
 .preset-explainer { margin: -4px 0 12px; }
 .preset-explainer summary { min-height: var(--tap); padding: 12px 0; line-height: 20px; color: var(--accent-soft); font-size: 14px; cursor: pointer; }
 .preset-explainer .preset-help { margin-top: 0; }
+.preset-detail { font-size: 12px; line-height: 1.4; }
+.preset-detail p { margin: 0 0 8px; }
 
 /* A missed training day, offered on the viewed date. */
 .missed-card { border-color: color-mix(in srgb, var(--warn) 45%, var(--border)); }

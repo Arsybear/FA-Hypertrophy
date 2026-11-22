@@ -1,37 +1,222 @@
 import { Store } from "./store.js";
 
-// Progression presets (coach's research, report.md section 4). A preset
-// says when the weight goes up (trigger: the top of the rep range, or its
-// middle) and by about how much (stepPct of the weight). The step is always
-// a whole number of the exercise's minimum increment (its equipment: 5 lb
-// dumbbells, 10 lb machine stacks), stored on the library exercise.
+// The progression rule: the preset is the rate, the load picks the lever.
+//
+// SYSTEM 1, the preset: a demand in rep-equivalents a week, the same at every
+// load. One rep-equivalent = one more rep at the same weight, or the weight
+// that pctPerRep says costs one rep (from 100 lb: 2.5 % of the load).
+// SYSTEM 2, the lever, set by the load and the equipment only: the demand is
+// asked as weight steps where one step costs under one rep and the logged
+// reps are above the range bottom; otherwise as reps.
+// A fraction of a rep or step cannot be asked in one session: it falls due as
+// whole units on calendar weeks (dueUnits), from the workout's date and the
+// exercise, so a prediction never depends on the day the app is opened.
 export const REP_COST_LB = 2.5; // one rep per 2.5 lb: the user's points (17.5x9 -> 20x8, 15x8 -> 20x6)
 export const MAX_PCT_PER_REP = 15; // cap for very light weights
 export const MIN_PCT_PER_REP = 2.5; // floor, reached at 100 lb
 export const DEFAULT_MIN_INCREMENT = 2.5;
+export const MAX_CONVERT_REPS = 4; // a fallback converted further than this gets no rep target (the fit covers jumps of 1-2 reps; 4 = the 8-12 width)
 export const DEFAULT_PROGRESSION = "moderate";
+// repsPerWeek: rep-equivalents a week = 0.5 / 1 / 2 % of capacity a week
+// from 100 lb. jumpQuarters: on reps-first lifts, how far below the range top
+// the effort-neutral jump is taken, in quarters of the range width (0 = at
+// the top). Both are the one place to change a preset.
 export const PRESETS = {
-  light: { stepPct: 0, trigger: "top" },
-  moderate: { stepPct: 2.5, trigger: "top" },
-  aggressive: { stepPct: 5, trigger: "mid" },
+  light: { repsPerWeek: 0.2, jumpQuarters: 0 }, // long-term intermediate (Human Kinetics: 0.42-0.56 %/wk)
+  moderate: { repsPerWeek: 0.4, jumpQuarters: 1 }, // between that and 8-week studies of trained lifters (1.3-2.1 %/wk)
+  aggressive: { repsPerWeek: 0.8, jumpQuarters: 2 }, // 8-week trained-to-failure rates (Schoenfeld 2016 squat 2.1 %/wk)
 };
 export const PROGRESSIONS = Object.keys(PRESETS);
+const EPOCH_MONDAY = Date.UTC(1970, 0, 5);
+const GOLDEN = 0.6180339887498949; // (sqrt 5 - 1) / 2
 
-// How many percent of load change costs one rep, from the weight the
-// estimate starts at: one rep per 2.5 lb, between 2.5 % and 15 % per rep.
+// Effort-neutral conversions only (jumps, hintReps, the user's two points).
 export function pctPerRep(weight) {
   return Math.min(MAX_PCT_PER_REP, Math.max(MIN_PCT_PER_REP, (REP_COST_LB / weight) * 100));
 }
 
-// Estimate the rep target at newWeight relative to the (baseWeight,
-// baseReps) anchor: one rep lost (or gained, for a lighter weight) per
-// pctPerRep(baseWeight)% of load change. Callers clamp to the rep range.
-// Not a 1RM formula (Epley/Brzycki): one curve for every exercise turned
-// 15x9 -> 20lb into 20x1.
 export function equivalentReps(baseWeight, baseReps, newWeight) {
   if (baseWeight == null || baseReps == null || newWeight == null || newWeight <= 0 || baseWeight <= 0) return null;
   const pctChange = (newWeight / baseWeight - 1) * 100;
   return Math.max(1, Math.round(baseReps - pctChange / pctPerRep(baseWeight)));
+}
+
+// What one minimum step costs, in reps, at this weight.
+export function stepCost(weight, minIncrement) {
+  return ((minIncrement / weight) * 100) / pctPerRep(weight);
+}
+
+// Weight first when one step is a smaller ask than one rep. From 17 to 100 lb
+// the cost is step / 2.5 whatever the load, so the default 2.5 lb step sits
+// exactly on the edge: a cost of exactly 1 asks reps, exactly 0.5 (1.25 lb)
+// asks weight. The 1e-9 guard is deliberate, so float error cannot move the
+// 2.5 lb default across the edge.
+export function weightFirst(weight, minIncrement) {
+  return stepCost(weight, minIncrement) < 1 - 1e-9;
+}
+
+// The workout's week: whole weeks since Monday 1970-01-05, from the ISO date
+// in UTC (no DST), so Monday to Sunday of one calendar week share a number.
+export function weekOf(isoDate) {
+  return Math.floor(Math.round((Date.parse(`${isoDate}T00:00:00Z`) - EPOCH_MONDAY) / 864e5) / 7);
+}
+
+// The exercise's phase in [0, 1): FNV-1a of its id (its name when an entry
+// has none), then the murmur3 finaliser so names a letter apart ("Curl A",
+// "Curl B") still land far apart. Lifts at one rate then do not all rise in
+// the same weeks, and every set and slot of one exercise share the phase.
+export function phaseOf(key) {
+  const s = String(key ?? "");
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  h ^= h >>> 16; h = Math.imul(h, 0x85ebca6b);
+  h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+
+// The rep count from which a reps-first lift may jump: the range top minus
+// jumpQuarters quarters of the width, rounded half up, in integers only
+// (8-12: 12 / 11 / 10; 5-8: 8 / 7 / 6; 10-15: 15 / 14 / 12).
+export function triggerReps(progression, repRangeMin, repRangeMax) {
+  return repRangeMax - Math.floor(((repRangeMax - repRangeMin) * PRESETS[progression].jumpQuarters + 2) / 4);
+}
+
+// Whole units (reps or steps) due this week at `perWeek` units a week:
+// floor(perWeek + u), u a golden-ratio sequence over the weeks shifted by the
+// exercise's phase. Long run: exactly perWeek; gaps near even (Light at 0.2:
+// 2, 3, 5 or 8 weeks apart, 5 on average, see spec-lines.txt); a higher rate is due in every week a
+// lower one is; a weight change moves only weeks near the threshold.
+export function dueUnits(perWeek, week, phase = 0) {
+  const u = (((week * GOLDEN + phase) % 1) + 1) % 1; // a week before 1970-01-05 is negative
+  return Math.floor(perWeek + u + 1e-9);
+}
+
+// Double progression with a demand, for one set. Under the range: one more
+// rep at the same weight, every session, whatever the preset (getting back
+// into the range is not paced). Bodyweight: the due reps, no cap. Otherwise
+// the week's due units in the lever's unit:
+//  - weight first: the due steps at the same reps.
+//  - reps first: the due reps; on reps-first lifts from triggerReps (any week)
+//    the weight goes up by the fewest steps that bring the reps back to no
+//    more than the logged reps (at the range top: into the range), at
+//    equivalentReps, so the jump itself asks nothing more. A jump that would
+//    land under the range is not taken: below the top the reps keep rising,
+//    at the top they keep growing past it until a jump lands.
+//  - reps above the range top (overshoot): max(due steps, 1) steps, never
+//    more, reps capped at the range top, so one log never doubles the weight
+//    (20x20 8-12 /2.5 -> 22.5x12). If that step would land under the range,
+//    no step: the reps keep growing.
+// A log from the same calendar week as the target (logWeek === week: a new
+// day template falling back to this week's log of another day, or a makeup
+// in the week of that day's next session) has no units due: the target
+// matches it (jumps and the overshoot step still apply; under the range
+// still +1). Otherwise the target week's units; skipped weeks are not caught
+// up. logWeek: weekOf(the date of the workout prevSet comes from); null or
+// missing = an earlier week.
+// The target weight is never below the last logged weight. No back-off.
+// Returns the target plus the week's demand (its ask in reps at the logged
+// weight), which nextSets hands on to the other sets of the group.
+// leverReps: the reps the weight-first condition reads (nextSets: the weakest
+// set at set 1's last weight; one set alone: its own reps).
+// week: weekOf(the workout's date). phase: phaseOf(the library exercise's id;
+// see buildPrefilledSets).
+function plan(prevSet, repRangeMin, repRangeMax, progression, minIncrement, week, phase, logWeek = null, leverReps = prevSet && prevSet.reps) {
+  if (!prevSet || prevSet.reps == null || prevSet.weight == null) return null;
+  if (!Number.isInteger(week)) throw new TypeError("nextSet needs the workout's week: weekOf(date)");
+  if (!(phase >= 0 && phase < 1)) throw new TypeError("nextSet needs the exercise's phase: phaseOf(library exercise id)");
+  const { weight, reps } = prevSet;
+  if (reps < repRangeMin) return { weight, reps: reps + 1, demand: 0 };
+  const perWeek = PRESETS[progression].repsPerWeek;
+  const units = (x) => (logWeek === week ? 0 : dueUnits(x, week, phase));
+  if (weight <= 0) { const d = units(perWeek); return { weight, reps: reps + d, demand: d }; }
+  const inc = minIncrement || DEFAULT_MIN_INCREMENT;
+  const cost = stepCost(weight, inc);
+  const byWeight = leverReps > repRangeMin && weightFirst(weight, inc);
+  const due = byWeight ? units(perWeek / cost) : units(perWeek);
+  const demand = byWeight ? due * cost : due; // in reps at `weight`
+  const at = (j) => ({ weight: Math.round((weight + j * inc) * 1000) / 1000, reps: Math.max(1, Math.round(reps + demand - j * cost)), demand });
+  if (reps > repRangeMax) {
+    const s = at(Math.max(byWeight ? due : 0, 1));
+    return s.reps >= repRangeMin ? { ...s, reps: Math.min(repRangeMax, s.reps) } : at(0);
+  }
+  if (byWeight) return at(due);
+  if (!weightFirst(weight, inc) && reps >= triggerReps(progression, repRangeMin, repRangeMax) && reps < repRangeMax) { // reps-first lifts only
+    let j = 1;
+    while (at(j).reps > reps) j++;
+    if (at(j).reps >= repRangeMin) return at(j);
+  }
+  if (reps < repRangeMax) return at(0);
+  let j = 1; // at the top
+  while (at(j).reps > repRangeMax) j++;
+  return at(j).reps >= repRangeMin ? at(j) : at(0);
+}
+
+export function nextSet(prevSet, repRangeMin, repRangeMax, progression, minIncrement, week, phase, logWeek = null) {
+  const p = plan(prevSet, repRangeMin, repRangeMax, progression, minIncrement, week, phase, logWeek);
+  return p && { weight: p.weight, reps: p.reps };
+}
+
+// All sets of one exercise in a workout. prevSets[i]: set i's last logged
+// set (findLastLoggedSet) or null. firstWeights[i]: the weight of set 1 in
+// the workout set i was logged in (null when set 1 was not logged there).
+// The group: set 1 (index 0) and every set that had set 1's weight in its
+// own workout (a straight set). Set 1 decides the group's weight (nextSet),
+// except that the weight-first condition (reps above the range bottom) reads
+// the weakest set of the group: while any straight set sits at the bottom,
+// the group's demand is asked as reps, so the weights do not climb away from
+// it. Every other set of the group takes set 1's weight with the same demand,
+// from its own last reps:
+//  - weight unchanged from the set's own log: under the range +1 (every
+//    session, as for set 1), otherwise reps + demand (0 in a weight-first
+//    week with no step).
+//  - weight changed: reps + demand minus the change in reps at the set's own
+//    logged weight (equivalentReps arithmetic; for a set logged with set 1
+//    this is set 1's own conversion, reps + demand - steps x cost). Shown as
+//    computed, also under the range: a tick logs the placeholder, so it must
+//    be a set the lifter can do.
+//  - capped at the range top, or at set 1's target reps when set 1 is past
+//    the top (a step too big to land yet). Bodyweight: no cap.
+// A set that had another weight than set 1 in its own workout (drop set,
+// pyramid) and every set when set 1 has no history: each on its own nextSet,
+// as before. A straight set that fell back to an older workout (skipped last
+// time) always takes the group's weight, so one skipped set never splits the
+// weights for good (alone, it would be logged at its own weight, read as a
+// drop set and never rejoin). Its own log at another weight than set 1's last
+// and the conversion costing more than MAX_CONVERT_REPS reps: the group's
+// weight with reps null (no rep target, the box shows plain "reps"), since a
+// conversion that far is a guess (150x9 under a 185 group would be 187.5x1).
+// A set logged with set 1 always keeps a number (the 10 -> 20 lb doubling).
+// The weakest set (the weight-first condition) is read from set 1 and the
+// group sets at set 1's own last weight only, so such a set never holds the
+// group back.
+// logWeeks[i]: weekOf(the date of the workout prevSets[i] comes from) (see
+// plan). The group's weight follows set 1's log week; a group set whose own
+// log is from the target's week gets no demand (it matches, converted to
+// the group's weight). Set 1 is never
+// asked below its last weight; a group set follows set 1's weight even when
+// its own (older) log was heavier (set 1 150 after a deload, set 2's older
+// log 200: set 2 is asked 152.5). Set 1 blank in the latest workout: no
+// group that week, each set alone.
+export function nextSets(prevSets, firstWeights, repRangeMin, repRangeMax, progression, minIncrement, week, phase, logWeeks = []) {
+  const inGroup = (prev, i) => i > 0 && prev && prev.reps != null && prev.weight != null && prev.weight === firstWeights[i];
+  const first = prevSets[0];
+  const weakest = Math.min(...prevSets.filter((p, i) => i === 0 || (inGroup(p, i) && first && p.weight === first.weight)).map((p) => p && p.reps));
+  const lead = plan(first, repRangeMin, repRangeMax, progression, minIncrement, week, phase, logWeeks[0], weakest);
+  return prevSets.map((prev, i) => {
+    if (i === 0) return lead && { weight: lead.weight, reps: lead.reps };
+    if (!lead || !inGroup(prev, i)) return nextSet(prev, repRangeMin, repRangeMax, progression, minIncrement, week, phase, logWeeks[i]);
+    const w = prev.weight, W = lead.weight;
+    const cost = w > 0 ? ((W / w - 1) * 100) / pctPerRep(w) : 0; // reps lost converting w to W
+    if (w !== first.weight && w > 0 && cost > MAX_CONVERT_REPS + 1e-9) return { weight: W, reps: null };
+    const demand = logWeeks[i] === week ? 0 : lead.demand; // a log from the target's week: no units (per set)
+    let reps = W === w ? prev.reps + (prev.reps < repRangeMin ? 1 : demand) : Math.max(1, Math.round(prev.reps + demand - cost));
+    if (W > 0) reps = Math.min(reps, Math.max(repRangeMax, lead.reps));
+    return { weight: W, reps };
+  });
 }
 
 // The reps placeholder for a set whose weight box holds `weight`: the
@@ -45,8 +230,9 @@ export function hintReps(baseWeight, baseReps, weight, repRangeMin, repRangeMax)
   return Math.min(Math.max(estimate, Math.min(repRangeMin, baseReps)), Math.max(repRangeMax, baseReps));
 }
 
-// Slots and entries saved before presets have only weightIncrementPct: the
-// nearest preset's stepPct (0 / 2.5 / 5), a tie going to moderate.
+// Slots and entries saved before presets have only weightIncrementPct (the
+// old per-slot % step): mapped by the old presets' cut points (0 / 2.5 / 5 %),
+// a tie going to moderate.
 export function presetFromPct(pct) {
   if (typeof pct !== "number" || !Number.isFinite(pct)) return DEFAULT_PROGRESSION;
   if (pct < 1.25) return "light";
@@ -68,38 +254,6 @@ export function minIncrementFor(library, exerciseId, exerciseName) {
     || (exerciseName != null && exerciseName !== UNKNOWN_EXERCISE && library.find((e) => e.name === exerciseName));
   const v = ex && ex.minIncrement;
   return typeof v === "number" && v > 0 ? v : DEFAULT_MIN_INCREMENT;
-}
-
-// The rep count at which the weight goes up: the top of the range, or (mid)
-// its middle, rounded up (8-12 -> 10, 5-8 -> 7).
-export function triggerReps(progression, repRangeMin, repRangeMax) {
-  return PRESETS[progression].trigger === "mid" ? repRangeMin + Math.ceil((repRangeMax - repRangeMin) / 2) : repRangeMax;
-}
-
-// The weight after one jump: the preset's % of the weight, rounded to the
-// NEAREST whole number of minIncrements (a half up), at least one. 1e-9
-// keeps an exact half from falling below through float error. The step is a
-// multiple of minIncrement; the new weight need not be.
-export function jumpedWeight(weight, progression, minIncrement) {
-  const steps = Math.max(1, Math.floor((weight * PRESETS[progression].stepPct) / 100 / minIncrement + 0.5 + 1e-9));
-  return Math.round((weight + steps * minIncrement) * 1000) / 1000;
-}
-
-// Double progression: the next set from the previous logged one. Below the
-// trigger, one more rep (up to the range top). At it, the weight jumps and
-// the reps follow equivalentReps (not reset to repRangeMin: 95x12 -> 97.5x8
-// would read as a deload). When the equipment's step is too big to land in
-// the range yet, one more rep instead, even past the range top.
-export function nextSet(prevSet, repRangeMin, repRangeMax, progression, minIncrement = DEFAULT_MIN_INCREMENT) {
-  if (!prevSet || prevSet.reps == null || prevSet.weight == null) return null;
-  const { weight, reps } = prevSet;
-  // Bodyweight (0 lb): nothing to add but reps, so no cap at the range top.
-  if (weight <= 0) return { weight, reps: reps + 1 };
-  if (reps < triggerReps(progression, repRangeMin, repRangeMax)) return { weight, reps: Math.min(reps + 1, repRangeMax) };
-  const newWeight = jumpedWeight(weight, progression, minIncrement);
-  const estimate = equivalentReps(weight, reps, newWeight);
-  if (estimate < repRangeMin) return { weight, reps: reps + 1 };
-  return { weight: newWeight, reps: Math.min(estimate, repRangeMax) };
 }
 
 export function isCompleteSet(s) {
@@ -169,16 +323,18 @@ export function exercisePR(workouts, workout, ex) {
 }
 
 // Find the most recent finished workout (date < beforeIsoDate) where this
-// exercise has a complete set at setIndex. Same day template first (the same
-// exercise can run heavier on one day than another), then a day of the same
-// name (a copied mesocycle has new day ids but keeps the names), and only
-// then any day — e.g. an exercise just swapped in.
+// exercise has a complete set at setIndex, and return that workout's entry
+// of the exercise. Same day template first (the same exercise can run
+// heavier on one day than another), then a day of the same name (a copied
+// mesocycle has new day ids but keeps the names), and only then any day —
+// e.g. an exercise just swapped in.
 // Looked up per set, not per exercise: a set left blank last time (skipped,
 // since untouched predictions are never saved) falls back to the most
 // recent workout where it was actually logged. Each workout stands for one
 // entry (findMatchingExercise), so a skipped set never takes the set of
 // another slot of the same exercise. `occurrence`: see findMatchingExercise.
-export function findLastLoggedSet(workouts, dayId, slotId, exerciseId, setIndex, beforeIsoDate, exerciseName, dayName = null, occurrence = 0) {
+// Returns { entry, date } (date: that workout's date) or null.
+function findLastLoggedEntry(workouts, dayId, slotId, exerciseId, setIndex, beforeIsoDate, exerciseName, dayName = null, occurrence = 0) {
   const candidates = workouts
     .filter((w) => w.finished && w.date < beforeIsoDate)
     .sort((a, b) => (a.date < b.date ? 1 : -1));
@@ -190,10 +346,16 @@ export function findLastLoggedSet(workouts, dayId, slotId, exerciseId, setIndex,
   for (const pool of pools) {
     for (const w of pool) {
       const ex = findMatchingExercise(w, matchers, occurrence);
-      if (ex && isCompleteSet(ex.sets[setIndex])) return ex.sets[setIndex];
+      if (ex && isCompleteSet(ex.sets[setIndex])) return { entry: ex, date: w.date };
     }
   }
   return null;
+}
+
+// The set itself (see findLastLoggedEntry).
+export function findLastLoggedSet(workouts, dayId, slotId, exerciseId, setIndex, beforeIsoDate, exerciseName, dayName = null, occurrence = 0) {
+  const found = findLastLoggedEntry(workouts, dayId, slotId, exerciseId, setIndex, beforeIsoDate, exerciseName, dayName, occurrence);
+  return found ? found.entry.sets[setIndex] : null;
 }
 
 export function blankSet(setIndex) {
@@ -203,20 +365,35 @@ export function blankSet(setIndex) {
 // Build a slot's sets for a new workout. weight/reps stay null — they only
 // ever hold what the user actually typed. The double-progression prediction
 // lives in baseWeight/baseReps and is shown as the inputs' placeholder.
+// All sets are predicted together (nextSets): each set's last log, plus the
+// weight set 1 had in the workout that log comes from, which decides whether
+// the set is a straight set of set 1's group, and the week of that workout
+// (a log from the target's own week has no units due).
+// A date that gives no week (malformed beforeIsoDate) gives blank sets, never
+// a throw: this runs at startup (refreshPredictions).
+// The phase is keyed on the library exercise found by id, then by name (as
+// minIncrementFor), so an entry without exerciseId and a renamed exercise
+// keep their phase.
 // dayName and occurrence: see findLastLoggedSet (optional).
 export function buildPrefilledSets(slot, workouts, dayId, beforeIsoDate, exerciseName, dayName = null, occurrence = 0) {
   const progression = progressionOf(slot);
-  const inc = minIncrementFor(Store.getExercises(), slot.exerciseId, exerciseName);
-  const sets = [];
-  for (let i = 0; i < slot.targetSets; i++) {
+  const library = Store.getExercises();
+  const inc = minIncrementFor(library, slot.exerciseId, exerciseName);
+  const week = weekOf(beforeIsoDate);
+  if (!Number.isInteger(week)) return Array.from({ length: slot.targetSets }, (_, i) => blankSet(i));
+  const libEx = (slot.exerciseId != null && library.find((e) => e.id === slot.exerciseId))
+    || (exerciseName != null && exerciseName !== UNKNOWN_EXERCISE && library.find((e) => e.name === exerciseName));
+  const phase = phaseOf(libEx ? libEx.id : slot.exerciseId || exerciseName);
+  const found = Array.from({ length: slot.targetSets }, (_, i) => findLastLoggedEntry(workouts, dayId, slot.id, slot.exerciseId, i, beforeIsoDate, exerciseName, dayName, occurrence));
+  const prevSets = found.map((f, i) => (f ? f.entry.sets[i] : null));
+  const firstWeights = found.map((f) => (f && isCompleteSet(f.entry.sets[0]) ? f.entry.sets[0].weight : null));
+  const logWeeks = found.map((f) => (f ? weekOf(f.date) : null));
+  return nextSets(prevSets, firstWeights, slot.repRangeMin, slot.repRangeMax, progression, inc, week, phase, logWeeks).map((s, i) => {
     const set = blankSet(i);
-    const prevSet = findLastLoggedSet(workouts, dayId, slot.id, slot.exerciseId, i, beforeIsoDate, exerciseName, dayName, occurrence);
-    const suggestion = prevSet && nextSet(prevSet, slot.repRangeMin, slot.repRangeMax, progression, inc);
-    if (suggestion) {
-      set.baseWeight = suggestion.weight;
-      set.baseReps = suggestion.reps;
+    if (s) {
+      set.baseWeight = s.weight;
+      set.baseReps = s.reps;
     }
-    sets.push(set);
-  }
-  return sets;
+    return set;
+  });
 }
