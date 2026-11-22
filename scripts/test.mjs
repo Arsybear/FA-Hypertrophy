@@ -1425,4 +1425,162 @@ for (const file of ["index.html", "manifest.json", ...walk("js"), ...walk("css")
   assert.ok(assets.includes(`"${file}"`), `${file} is missing from ASSETS in sw.js`);
 }
 
+// The service worker, run in Node with fakes of self, caches, fetch and
+// Request: install, the cache-first fetch, refill() of a lost cache (whole set
+// into a scratch cache, copied only when its js/version.js is this version),
+// and activate.
+{
+  const swSource = fs.readFileSync(path.join(root, "sw.js"), "utf8");
+  const LOC = "http://x.test/app/sw.js";
+  const NAME = `fa-hypertrophy-v${APP_VERSION}`, SCRATCH = `${NAME}-refill`;
+  const assetUrls = [...assets.matchAll(/"([^"]*)"/g)].map((m) => new URL(m[1], LOC).href);
+  const VERSION_URL = new URL("js/version.js", LOC).href;
+  const res = (body, ok = true) => ({ ok, status: ok ? 200 : 404, body, text: async () => body });
+  class Request {
+    constructor(url, { method = "GET", cache } = {}) { this.url = new URL(url, LOC).href; this.method = method; this.cache = cache; }
+  }
+  const keyOf = (req, ignoreSearch) => { const u = new URL(typeof req === "string" ? req : req.url, LOC); if (ignoreSearch) u.search = ""; return u.href; };
+  const boot = (version = APP_VERSION) => {
+    const files = new Map([...assetUrls.map((u) => [u, `body of ${u}`]), [new URL("other.png", LOC).href, "png"]]);
+    files.set(VERSION_URL, `export const APP_VERSION = ${version};`);
+    const server = { files, offline: false, notOk: new Set(), calls: new Map(), modes: [] };
+    const fetch = async (req) => {
+      const url = keyOf(req);
+      server.calls.set(url, (server.calls.get(url) || 0) + 1);
+      server.modes.push([url, req.cache]);
+      await null;
+      if (server.offline) throw new TypeError("offline");
+      return files.has(url) && !server.notOk.has(url) ? res(files.get(url)) : res("", false);
+    };
+    class Cache {
+      constructor() { this.entries = new Map(); }
+      async match(req, { ignoreSearch } = {}) { return this.entries.get(keyOf(req, ignoreSearch)); }
+      async put(req, response) { this.entries.set(keyOf(req), response); }
+      async keys() { return [...this.entries.keys()].map((u) => new Request(u)); }
+      async addAll(reqs) {
+        const got = await Promise.all(reqs.map((r) => fetch(r)));
+        if (got.some((r) => !r.ok)) throw new TypeError("addAll: a response is not ok");
+        reqs.forEach((r, i) => this.entries.set(r.url, got[i]));
+      }
+    }
+    const store = new Map();
+    const caches = {
+      failOpen: false, failDeleteOnce: null, // m: open rejects; n: one delete of that name rejects
+      async open(name) { if (this.failOpen) throw new Error("storage blocked"); if (!store.has(name)) store.set(name, new Cache()); return store.get(name); },
+      async keys() { return [...store.keys()]; },
+      async delete(name) { if (name === this.failDeleteOnce) { this.failDeleteOnce = null; throw new Error("delete failed"); } return store.delete(name); },
+    };
+    const handlers = {};
+    const self = { location: LOC, addEventListener: (type, fn) => { handlers[type] = fn; }, skipWaiting() {}, clients: { claim() {} } };
+    new Function("self", "caches", "fetch", "Request", "URL", swSource)(self, caches, fetch, Request, URL);
+    const fire = (type, request) => {
+      const ev = { request, responded: null, waited: [], respondWith(p) { this.responded = p; }, waitUntil(p) { this.waited.push(p); } };
+      handlers[type](ev);
+      return ev;
+    };
+    const install = async () => { await Promise.all(fire("install").waited); server.calls.clear(); server.modes.length = 0; };
+    const done = (ev) => Promise.all(ev.waited);
+    const cacheUrls = () => (store.has(NAME) ? [...store.get(NAME).entries.keys()].sort() : []);
+    return { server, store, caches, fire, install, done, cacheUrls };
+  };
+  const all = [...assetUrls].sort();
+  // a. install: one entry per ASSETS item, each fetched past the HTTP cache.
+  let w = boot();
+  await Promise.all(w.fire("install").waited);
+  assert.deepStrictEqual(w.cacheUrls(), all);
+  assert.strictEqual(assetUrls.length, new Set(assetUrls).size);
+  assert.ok(w.server.modes.length === assetUrls.length && w.server.modes.every(([, mode]) => mode === "reload"));
+  // b. a hit (search ignored): the cached body, no network, no scratch cache.
+  w.server.calls.clear();
+  let ev = w.fire("fetch", new Request("http://x.test/app/js/ui.js?x=1"));
+  assert.strictEqual((await ev.responded).body, "body of http://x.test/app/js/ui.js");
+  await w.done(ev);
+  assert.strictEqual(w.server.calls.size, 0);
+  assert.ok(!w.store.has(SCRATCH));
+  // c. the whole cache deleted: answered from the network, then refilled.
+  w = boot(); await w.install(); w.store.delete(NAME);
+  ev = w.fire("fetch", new Request("http://x.test/app/"));
+  assert.strictEqual((await ev.responded).body, "body of http://x.test/app/");
+  await w.done(ev);
+  assert.deepStrictEqual(w.cacheUrls(), all);
+  assert.ok(assetUrls.every((u) => w.store.get(NAME).entries.get(u).body === w.server.files.get(u)));
+  assert.ok(!w.store.has(SCRATCH));
+  // d. one entry deleted: refilled.
+  w = boot(); await w.install(); w.store.get(NAME).entries.delete("http://x.test/app/js/ui.js");
+  ev = w.fire("fetch", new Request("http://x.test/app/js/ui.js"));
+  await ev.responded; await w.done(ev);
+  assert.deepStrictEqual(w.cacheUrls(), all);
+  assert.ok(!w.store.has(SCRATCH));
+  // e. the server already holds the next version: nothing written.
+  w = boot(APP_VERSION + 1); await w.install(); w.store.get(NAME).entries.clear();
+  ev = w.fire("fetch", new Request("http://x.test/app/"));
+  await ev.responded; await w.done(ev);
+  assert.deepStrictEqual(w.cacheUrls(), []);
+  assert.ok(!w.store.has(SCRATCH));
+  // l. the same worker after that: no second refill, the page from the network.
+  w.server.calls.clear(); w.server.modes.length = 0;
+  ev = w.fire("fetch", new Request("http://x.test/app/js/ui.js"));
+  assert.strictEqual((await ev.responded).body, "body of http://x.test/app/js/ui.js");
+  await w.done(ev);
+  assert.strictEqual(w.server.calls.get("http://x.test/app/js/ui.js"), 1);
+  assert.ok(!w.server.modes.some(([, mode]) => mode === "reload"));
+  assert.deepStrictEqual(w.cacheUrls(), []);
+  assert.ok(!w.store.has(SCRATCH));
+  // f. one file not ok on the server: all or nothing.
+  w = boot(); await w.install(); w.store.get(NAME).entries.clear();
+  w.server.notOk.add("http://x.test/app/js/chart.js");
+  ev = w.fire("fetch", new Request("http://x.test/app/"));
+  await ev.responded; await w.done(ev);
+  assert.deepStrictEqual(w.cacheUrls(), []);
+  assert.ok(!w.store.has(SCRATCH));
+  // g. offline with an empty cache: the response fails, the refill settles quietly.
+  w = boot(); await w.install(); w.store.get(NAME).entries.clear(); w.server.offline = true;
+  ev = w.fire("fetch", new Request("http://x.test/app/index.html"));
+  await assert.rejects(ev.responded);
+  await w.done(ev);
+  assert.deepStrictEqual(w.cacheUrls(), []);
+  assert.ok(!w.store.has(SCRATCH));
+  // Back online, the next miss (with a query string, as a launch can carry)
+  // refills: a failed refill does not block the next one.
+  w.server.offline = false;
+  ev = w.fire("fetch", new Request("http://x.test/app/index.html?launch=1"));
+  await ev.responded; await w.done(ev);
+  assert.deepStrictEqual(w.cacheUrls(), all);
+  // h. a miss outside ASSETS: the network, one call, no refill.
+  w = boot(); await w.install();
+  ev = w.fire("fetch", new Request("http://x.test/app/other.png"));
+  assert.strictEqual((await ev.responded).body, "png");
+  assert.strictEqual(ev.waited.length, 0);
+  assert.deepStrictEqual([...w.server.calls.values()], [1]);
+  // i. not a GET: left to the browser.
+  ev = w.fire("fetch", new Request("http://x.test/app/", { method: "POST" }));
+  assert.ok(ev.responded === null && ev.waited.length === 0);
+  // j. two misses at once: one refill.
+  w = boot(); await w.install(); w.store.delete(NAME);
+  const two = ["http://x.test/app/js/ui.js", "http://x.test/app/css/style.css"].map((u) => w.fire("fetch", new Request(u)));
+  await Promise.all(two.map((e) => e.responded)); await Promise.all(two.map(w.done));
+  assert.ok(assetUrls.every((u) => w.server.modes.filter(([url, mode]) => url === u && mode === "reload").length === 1));
+  assert.deepStrictEqual(w.cacheUrls(), all);
+  // k. activate: this app's other caches go, the scratch one too; another
+  // project's cache on the same origin stays.
+  w = boot(); await w.install();
+  w.store.set("fa-hypertrophy-v1", null).set(SCRATCH, null).set("other-app-v1", null);
+  await Promise.all(w.fire("activate").waited);
+  assert.deepStrictEqual([...w.store.keys()].sort(), [NAME, "other-app-v1"].sort());
+  // m. the cache cannot be opened: the page comes from the network, the refill settles.
+  w = boot(); await w.install(); w.caches.failOpen = true;
+  ev = w.fire("fetch", new Request("http://x.test/app/index.html"));
+  assert.strictEqual((await ev.responded).body, "body of http://x.test/app/index.html");
+  await w.done(ev);
+  // n. a failed delete of the scratch cache does not block the next refill.
+  w = boot(); await w.install(); w.store.delete(NAME); w.caches.failDeleteOnce = SCRATCH;
+  ev = w.fire("fetch", new Request("http://x.test/app/"));
+  await ev.responded; await w.done(ev);
+  assert.strictEqual(w.caches.failDeleteOnce, null);
+  w.store.get(NAME).entries.delete("http://x.test/app/js/ui.js"); // the miss is that file (index.html would be a hit)
+  ev = w.fire("fetch", new Request("http://x.test/app/js/ui.js"));
+  await ev.responded; await w.done(ev);
+  assert.deepStrictEqual(w.cacheUrls(), all);
+}
+
 console.log("ok");

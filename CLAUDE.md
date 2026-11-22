@@ -60,8 +60,10 @@ Then open the printed URL. There is no lint config. `node scripts/test.mjs`
 is a small self-check of the logic that needs no browser (history matching,
 double progression, weekday resolution and shifts, missed days and undo,
 reconciliation, PRs, library edits, copying a mesocycle, backup
-validation) plus two release checks: every loaded file is in `sw.js`'s
-`ASSETS`, and `APP_VERSION` equals `CACHE_NAME`. Run it before committing. Everything else is
+validation) plus the release checks: every loaded file is in `sw.js`'s
+`ASSETS`, `APP_VERSION` equals `CACHE_NAME`, and `sw.js` itself run against
+fakes of the cache and the network (install, cache-first fetch, the refill
+of a lost cache, activate). Run it before committing. Everything else is
 verified by exercising the UI in a browser. Chrome will not go narrower
 than ~500px, so check the phone layout in a 390px-wide same-origin iframe.
 The service worker serves cached files first: when testing a change,
@@ -82,12 +84,25 @@ than a domain root.
 The app is a PWA with a service worker (`sw.js`) that precaches `sw.js`'s
 `ASSETS` list (`index.html`, `css/style.css`, every `js/*.js`,
 `manifest.json`, the icons) at install and then serves cache first. The
-cache is written only at install (with `cache: "reload"`, past the browser's
-HTTP cache), never while the app runs: an earlier stale-while-revalidate
-version wrote fresh responses into the current cache, so a deploy followed
-by a dropped connection could leave one cache holding modules from two
-versions, and the next offline launch failed to link them (blank page). An
-installed instance therefore changes only when `CACHE_NAME` changes — that
+cache is only ever written with files of its own version, a whole set at a
+time (with `cache: "reload"`, past the browser's HTTP cache): at install, and by
+`refill()` when a GET for a precached file misses the cache. A browser can
+drop a cache, or one entry, and keep the worker (WebKit can remove caches left
+unopened for a few weeks), and install never runs again for the same
+`CACHE_NAME`, so without the refill the app would load from the network
+from then on and stop starting offline. `refill()` fetches the whole
+`ASSETS` set into a scratch cache (`<CACHE_NAME>-refill`; `addAll` writes
+all of it or nothing) and copies it over only when the fetched
+`js/version.js` carries the worker's own version, so the files of a newer
+deploy are left to that deploy's worker (and the old worker stops
+refilling once it has seen one, `newerDeploy`). A scratch cache a killed
+worker left behind is removed by the next refill or the next version's
+`activate`, which deletes only caches named `fa-hypertrophy-*`: github.io
+is one origin for every project on it. Single responses are never written while the
+app runs: an earlier stale-while-revalidate version did that, so a deploy
+followed by a dropped connection could leave one cache holding modules from
+two versions, and the next offline launch failed to link them (blank page).
+An installed instance therefore changes only when `CACHE_NAME` changes — that
 is what makes `install` fetch a whole fresh set and `activate` drop the old
 cache; without a bump a deployed change never reaches it. **Any commit
 that changes one of those cached files must also bump `CACHE_NAME` in
@@ -162,7 +177,9 @@ and re-run it rather than editing the outputs.
 ### Data model (`js/store.js`)
 
 Three `localStorage` keys, all accessed through the `Store` object (never
-touch `localStorage` directly elsewhere):
+touch `localStorage` directly elsewhere). At startup `js/main.js` asks the
+browser for persistent storage (`navigator.storage.persist()`), so it does
+not clear the log when it frees space; a refusal changes nothing.
 
 - `fah_exercises` — flat array, the global reusable exercise library. Each
   entry is `{id, name, muscleGroup}` plus an optional `note` (at most 200
