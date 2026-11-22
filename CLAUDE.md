@@ -58,7 +58,8 @@ python -m http.server
 
 Then open the printed URL. There is no lint config. `node scripts/test.mjs`
 is a small self-check of the logic that needs no browser (history matching,
-double progression, weekday resolution, copying a mesocycle, backup
+double progression, weekday resolution and shifts, missed days and undo,
+reconciliation, PRs, library edits, copying a mesocycle, backup
 validation) plus two release checks: every loaded file is in `sw.js`'s
 `ASSETS`, and `APP_VERSION` equals `CACHE_NAME`. Run it before committing. Everything else is
 verified by exercising the UI in a browser. Chrome will not go narrower
@@ -117,11 +118,14 @@ never interrupts someone mid-workout on `#/today`.
   listeners, registers the service worker.
 - `store.js` — `Store` (all `localStorage` access), `validateBackup`, and
   the number clamps (`cleanCount`, `cleanPct`, `normalizeMesocycles`).
-- `schedule.js` — dates, weekday-to-day-template resolution, and the one
-  date format shown everywhere (`formatDay`, `formatShortDate`).
-- `progression.js` — double progression and the history matchers.
+- `schedule.js` — dates, weekday-to-day-template resolution including
+  shifts, and the one date format shown everywhere (`formatDay`,
+  `formatShortDate`).
+- `progression.js` — double progression, the history matchers and
+  `exercisePR`.
 - `workout.js` — workout generation, template reconciliation,
-  `getTodayContext`, `getExerciseHistory`.
+  `getTodayContext`, the missed-day functions, `refreshPredictions`,
+  `getExerciseHistory`.
 - `ui.js` — `App` state, escaping and form helpers, `pageHeader`, `icon`,
   muscle tags, and the route registry (`registerRoute`,
   `renderCurrentView`). Views call `renderCurrentView` from here, so no view
@@ -143,7 +147,11 @@ near-black steel surfaces with a mulberry accent. `--accent` is for fills
 dark surfaces. Green (`--success`) means done, amber (`--warn`) in progress
 — in the week strip, the calendar, set rows and the progress bar alike.
 Inputs are 16px (anything smaller makes iOS zoom the page on focus) and tap
-targets are at least 44px (`--tap`). The mark (a great helm whose face
+targets are at least 44px (`--tap`). Prediction placeholders are `--muted`
+at full opacity (above 4.5:1 on the input, and lighter in weight than a
+typed value); the outline of an empty control (unticked done circle) is
+`--control-edge`, a neutral grey just above 3:1 on the card — `--muted`
+there made a column of empty circles louder than the numbers. The mark (a great helm whose face
 plate is the letters FA) is drawn by `scripts/make_icons.py`, which writes
 `icons/icon.svg`, `icons/mark.svg` and the PNG sizes; change the mark there
 and re-run it rather than editing the outputs.
@@ -154,11 +162,12 @@ Three `localStorage` keys, all accessed through the `Store` object (never
 touch `localStorage` directly elsewhere):
 
 - `fah_exercises` — flat array, the global reusable exercise library. Each
-  entry is `{id, name, muscleGroup}`; `muscleGroup` is one of the fixed
-  `MUSCLE_GROUPS` options in `js/ui.js` (defaults to `"Other"` for entries
-  created before this field existed). Set once at creation via
-  `Store.addExercise(name, muscleGroup)` — there's no separate edit flow for
-  it. Weight units are pounds throughout the UI; nothing in the data model
+  entry is `{id, name, muscleGroup}` plus an optional `note` (at most 200
+  characters, shown on the exercise's Today card); `muscleGroup` is one of
+  the fixed `MUSCLE_GROUPS` options in `js/ui.js` (defaults to `"Other"` for
+  entries created before this field existed). Set at creation via
+  `Store.addExercise(name, muscleGroup)` and changed afterwards only through
+  `Store.updateExercise` (see Exercise library below). Weight units are pounds throughout the UI; nothing in the data model
   is unit-typed, it's just a number. Progression weight increments are a
   percentage of the current weight, not a flat lb amount (`+%` labels,
   `slot.weightIncrementPct`, 2.5% default via `DEFAULT_INCREMENT_PCT` in
@@ -181,10 +190,16 @@ touch `localStorage` directly elsewhere):
   its **live day template** (`days[]`, each with an ordered `exercises[]` of
   "slots" — a slot references an exercise plus its target sets/rep
   range/weight increment). Editing a slot or day here always affects the
-  future, since this *is* the template.
+  future, since this *is* the template. An optional `shifts` array
+  (`[{date, days}]`, see Shifts and missed workouts below) moves the
+  schedule after a missed day; a mesocycle without the key behaves exactly
+  as before.
 - `fah_workouts` — append-only array of generated/logged workout instances,
-  each tagged with `mesocycleId` and `dayId`, and never deleted, so history
-  survives switching or archiving mesocycles.
+  each tagged with `mesocycleId` and `dayId`. A workout with anything logged
+  is never deleted, so history survives switching or archiving mesocycles
+  (only an untouched unfinished one is ever dropped and regenerated). A
+  workout done on a date whose own schedule does not hold that day template
+  carries `makeup: true` and `makeupFor` (the missed date).
 
 ### Scheduling is calendar-based, not a rotation pointer (`js/schedule.js`)
 
@@ -211,6 +226,53 @@ pointer to advance — editing a mesocycle's `startDate` immediately
 reshuffles which weekday maps to which template, wrapping past Sunday back
 to Monday. This is why "finish workout" doesn't need to touch any schedule
 state.
+
+### Shifts and missed workouts (`js/schedule.js`, `js/workout.js`)
+
+A missed training day can be done on a later day (the user's case: train
+Monday/Wednesday/Friday, miss Monday, do it Tuesday). Today shows a "Missed"
+card (`missed` from `getTodayContext`, which is `findMissedDay`) when
+nothing on the viewed date or later is logged and an earlier training day
+has no logged workout. The missed day is the EARLIEST such day back to the
+last logged workout, gap day or made-up date (at most 366 days back), so two
+missed sessions are resumed in program order. `doMissedDay` does it one of
+two ways, chosen by the card's "Shift mesocycle to fit" checkbox (read when
+the button is clicked, so it needs no `change` route):
+
+- Ticked: `Store.addShift` stores `{date: M, days: X - M}` on the mesocycle
+  (M the missed date, X the day it is done). A shift inserts `days` gap days
+  starting at `date`: those dates are rest days, and every later date maps
+  back by the total of the shifts before it (`schedulePosition`).
+  `resolveDayForDate` is the only place that applies this, so the week
+  strip, the calendar, Program's weekdays (`offsetWeekday`), the week number
+  (`weekNumber`) and the planned end (`plannedEndIso`) all follow. Use those
+  helpers; never work out a weekday or a week from `startDate` alone.
+  Several shifts in one mesocycle add up. On a day that is itself a training
+  day the checkbox is ticked and disabled (that day's own workout has to
+  move).
+- Unticked (a rest day only): a one-off makeup workout is generated from the
+  missed day's template on the viewed date, with `makeup: true` and
+  `makeupFor: M`. Nothing else moves. A makeup workout is reconciled against
+  its own day template and never dropped for a `dayId` mismatch. Once it
+  is touched or finished, Today shows "Makeup for <date>." under the week
+  strip instead of the "schedule changed" notice.
+
+While the moved workout is untouched and nothing later is logged (`madeUp`
+in `getTodayContext`), Today offers Undo (`undoMissedDay`): it removes the
+shift (only the last one in `shifts`) or the makeup workout and leaves
+storage as it was before. `missed` is null whenever `madeUp` is set, so the
+card and the Undo notice never show together. Editing the start date keeps
+the shifts, except those dated before the new start. A copy has no shifts
+and starts after the source's shifted end. `validateBackup` checks `shifts`
+(sorted, not overlapping, `days` a whole number from 1 to 366, none before
+`startDate`).
+
+Late logging: a past day can be opened, completed and finished at any time.
+`refreshPredictions()` rebuilds the predictions of every unfinished
+workout's untouched exercises; it is called after finish, reopen and
+import, never from `getTodayContext` (that runs on every keystroke). So
+finishing yesterday late feeds today's numbers. Today's screen also names
+the most recent earlier workout left half logged, with a link to it.
 
 ### Lazy workout generation + progression (`js/workout.js` `generateWorkout`, `js/progression.js`)
 
@@ -251,14 +313,21 @@ the workout's `exercises[]` and builds each slot's `sets[]` via
 *finished* workout where that exercise's set was actually logged
 (`findLastLoggedSet`), and applies double progression (`nextSet` in
 `js/progression.js`). History and predictions follow the **exercise, never
-the slot** (`exerciseMatchers`, shared with the History sheet's
-`getExerciseHistory`): `exerciseId` + `slotId`, then `exerciseId`, then
-`exerciseName` (entries with a missing/stale id; library names are unique).
-`slotId` only breaks the tie when one day has the same exercise in two
-slots. Matching `slotId` first was a bug: a swapped-in exercise got the
-previous exercise's history and predictions. The lookup tries the same
-`dayId` first and only then any day, so a swapped-in exercise or a new
-mesocycle's first week (new day ids) still gets a prediction. For the same
+the slot** (`exerciseMatchers`): `exerciseId` + `slotId`, then `exerciseId`,
+then `exerciseName` (entries with a missing/stale id; library names are
+unique). The placeholder name "(unknown exercise)" never matches by name,
+or two different deleted exercises would share one history. `slotId` only
+breaks the tie when one day has the same exercise in two slots; when no
+entry matches by `slotId` (a copied mesocycle has new slot ids) the k-th
+slot of an exercise takes the k-th entry of it. Matching `slotId` first was
+a bug: a swapped-in exercise got the previous exercise's history and
+predictions. Each workout gives one entry, the most specific match; if that
+entry's set is blank the lookup goes on to an older workout, never to the
+exercise's other slot in the same workout. The lookup tries the same
+`dayId` first, then workouts whose `dayName` equals the day's name (a copied
+mesocycle keeps the names, so Monday's heavy squat follows Monday's and not
+Thursday's lighter one), and only then any day, so a swapped-in exercise or
+a new mesocycle's first week (new day ids) still gets a prediction. For the same
 reason `confirm-substitute` rebuilds the sets' `baseWeight`/`baseReps` for
 the new exercise and blanks every set (anything already entered was the old
 exercise's and would be saved as the new one's history). The prediction is stored only in the set's
@@ -309,7 +378,13 @@ logged. An **unfinished** one dated today (or later) is not: every time
 against the day template's current slots (added/removed exercises,
 reordered slots, changed sets/rep range/increment), preserving any sets
 already logged (lowering a slot's sets only drops trailing untouched
-sets). This is what makes a `#/program` edit reach an
+sets; sets added because the target went up get their prediction there).
+An exercise whose slot left the template is dropped only when none of its
+sets is touched; with anything logged it stays, as a `oneOff`. An untouched
+entry whose `exerciseId` differs from its slot's is rebuilt to the slot's
+exercise unless it is flagged `swapped` (a "this workout only" swap) — that
+is how an "all future" swap made on a reopened past day reaches today's
+already generated workout. This is what makes a `#/program` edit reach an
 already-generated but not-yet-finished `#/today` (including a same-day edit
 made after that day's workout was generated). A **past-dated** workout is
 never reconciled, even when unfinished or reopened via "Reopen Workout" —
@@ -347,7 +422,7 @@ don't flip to unticked/unlocked. Unlike
 no-re-render rule protects focus while typing, and a checkbox tap isn't.
 
 The card header has two buttons: History, and a "more" toggle
-(`App.ui.menuOpen`) that shows Swap / Remove / Up / Down as labelled
+(`App.ui.menuOpen`) that shows Swap / Note / Remove / Up / Down as labelled
 buttons. Only one panel is open at a time (`closePanels`). A form submitted
 with nothing chosen stays open and says why (`App.ui.formError`,
 `renderFormError`); the same goes for `#/program`'s forms. "Finish workout"
@@ -365,8 +440,10 @@ today's unfinished workout is re-synced against the template on every read
 or reconciliation undoes it on the next render (this actually happened —
 one-off adds vanished and one-off removes came straight back): a one-off
 added exercise is flagged `oneOff: true` (kept even though it has no
-template slot), and a one-off removed template slot goes into
-`workout.skippedSlotIds` (never re-added). Reordering exercises has no scope
+template slot), a one-off removed template slot goes into
+`workout.skippedSlotIds` (never re-added), and a one-off substitute is
+flagged `swapped: true` (never rebuilt to the template's exercise; an "all
+future" substitute removes the flag). Reordering exercises has no scope
 choice — it swaps the two exercises in the instance and the *same two*
 slots in the template (`Store.swapExerciseSlotOrder`, not the template's own
 neighbor, which can differ when a skipped slot sits between them), and
@@ -407,6 +484,15 @@ interactive elements as `data-action="…"` + a case in the relevant
 nor re-renders it. Escape closes the open overlay by clicking its
 `close-*` button.
 
+Keyboard and screen-reader behaviour lives in `renderCurrentView`
+(`js/ui.js`), once for every view: while `#overlay-root` has content,
+`#view` and `.bottom-nav` are `inert`, and `wrapOverlayFocus` (called from
+the `keydown` listener in `js/main.js`) keeps Tab inside the overlay. After
+an action re-render, focus goes back to the control that had it (matched by
+`data-action`/`data-role` plus `data-slot`/`data-day`/`data-id`/`data-set`),
+but only when that focus was `:focus-visible`: a touch tap must not leave a
+focus ring behind.
+
 Ephemeral UI state (which inline form/history panel is open) lives in the
 module-level `App.ui` object, reset on every `hashchange` but preserved
 across in-place re-renders triggered by an action (so an open form doesn't
@@ -446,8 +532,32 @@ on every call; there is no separate app-state layer.
   weekday, so the copy starts on the same weekday as the original (first
   such date after its planned end, or after today) to keep every training
   day on its weekday.
-- **Charts** (`js/chart.js`, History sheet, two or more sessions): top-set
-  weight and total volume per session. Not an estimated 1RM, for the same
+- **Exercise library** (`#/settings`): `Store.updateExercise(id, {name,
+  muscleGroup, note})` is the only way an exercise changes after creation.
+  A rename also rewrites `exerciseName` in every workout entry of that id
+  or carrying the old name, finished ones included, so history follows it.
+  It returns null and changes nothing for an empty name, a name another
+  exercise has, or a name carried by workout entries of a different
+  exercise id (a deleted exercise's history would merge into this one); a
+  case-only rename is allowed. The note is edited from the Today card's
+  "more" menu and is cut to 200 characters.
+- **Summary and PRs**: a finished workout's Today screen shows a summary
+  card (sets completed, total volume, PR count) and a badge on each PR
+  exercise; History's expanded detail shows the same badge. `exercisePR`
+  compares against finished workouts dated strictly earlier: "weight" when
+  this workout's heaviest complete set beats every earlier one, else "reps"
+  when a set has more reps than ever done at that weight or heavier and an
+  earlier set at exactly that weight exists, else null (also when there is
+  no earlier history).
+- **History sheet** (`getExerciseHistory`): every finished entry of the
+  exercise from every day and slot, newest first, each row labelled with
+  its date and day name, plus "1 of 2" when one day has the exercise twice.
+  The user's rule: the same exercise on two days is one history, and the
+  label says which day a row came from. (Predictions are narrower on
+  purpose: same day first, see above.)
+- **Charts** (`js/chart.js`, History sheet, two or more dates): top-set
+  weight and total volume per date, the most recent 12 dates (more points
+  than that cannot be tapped on a phone). Not an estimated 1RM, for the same
   reason `nextSet` does not use one. Single series, so no legend; the
   readout shows the latest point or the one hovered/tapped
   (`handleChartPoint`, delegated on `#overlay-root`; a mouse leaving the

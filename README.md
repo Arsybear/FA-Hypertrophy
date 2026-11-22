@@ -15,8 +15,16 @@ prefill (no RIR tracking, no volume-landmark dashboard).
   beat as a greyed hint, from the last time you logged that exercise. Tick a
   set to log it exactly as predicted.
 - Week strip and month calendar of the training block; finish, reopen and
-  backfill workouts.
-- Per-exercise history with top-set and volume charts.
+  backfill workouts, also late (a workout left half logged is pointed out
+  the next time you open the app).
+- Missed a day: do it on a later day, either as a one-off or with "Shift
+  mesocycle to fit", which moves every later workout along with it. Undo
+  while nothing is logged.
+- A summary of each finished workout, with weight and rep PR badges.
+- Per-exercise history across every day it is trained on, with top-set and
+  volume charts.
+- Rename an exercise or change its muscle group (its history follows), and
+  keep a note per exercise.
 - Copy a mesocycle as the starting point for the next one.
 - Export and import a backup file.
 - Works offline once loaded; all data stays in the browser.

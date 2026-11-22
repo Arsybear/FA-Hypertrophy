@@ -1,8 +1,8 @@
 import { Store, cleanCount, cleanPct, cleanSetValue, uid } from "../store.js";
 import { WEEKDAY_LABELS, addDays, daysBetween, formatDay, formatShortDate, isoDate, jsDateToWeekdayIndex, parseLocalDate, plannedEndIso, resolveDayForDate, weekNumber } from "../schedule.js";
-import { DEFAULT_INCREMENT_PCT, blankSet, buildPrefilledSets, equivalentReps, exercisePR, isCompleteSet } from "../progression.js";
+import { DEFAULT_INCREMENT_PCT, blankSet, equivalentReps, exercisePR, isCompleteSet } from "../progression.js";
 import { App, cssEscape, emptyMesoState, escapeHtml, findLibraryExercise, fmtNum, getExerciseMuscleGroup, icon, pageHeader, plural, renderCurrentView, renderExerciseOptionsGrouped, renderFormError, renderMuscleGroupSelect, renderMuscleTag, renderPrBadge } from "../ui.js";
-import { doMissedDay, getExerciseHistory, getTodayContext, isTouchedSet, refreshPredictions, undoMissedDay } from "../workout.js";
+import { buildEntrySets, doMissedDay, getExerciseHistory, getTodayContext, isTouchedSet, refreshPredictions, undoMissedDay } from "../workout.js";
 import { renderLineChart } from "../chart.js";
 
 // Dot colour for a day: green once finished, amber once anything is entered.
@@ -146,10 +146,13 @@ function renderNotices(meso, dayTemplate, workout, dateIso, isToday, madeUp) {
   if (isToday && dateIso > plannedEnd) {
     notes.push(`The ${meso.numWeeks} planned weeks of this mesocycle ended ${formatShortDate(plannedEnd)}. Keep going, or <a href="#/settings">copy it in Settings</a> to start the next one.`);
   }
-  if (workout && (!dayTemplate || workout.dayId !== dayTemplate.id)) {
+  // A makeup sits off its schedule on purpose: say why once it is under way
+  // (while untouched, the "moved here" notice with Undo says it).
+  const makeupLine = workout && workout.makeup && !madeUp ? `<p class="muted makeup-line">Makeup for ${formatDay(workout.makeupFor)}.</p>` : "";
+  if (workout && !workout.makeup && (!dayTemplate || workout.dayId !== dayTemplate.id)) {
     notes.push("The schedule changed after this workout was started. It is kept as it was logged.");
   }
-  let html = notes.map((note) => `<p class="notice">${note}</p>`).join("");
+  let html = makeupLine + notes.map((note) => `<p class="notice">${note}</p>`).join("");
   if (madeUp && workout) {
     const moved = madeUp.shifted ? ` Later workouts moved ${plural(daysBetween(parseLocalDate(madeUp.dateIso), parseLocalDate(dateIso)), "day")}.` : "";
     html += `<div class="notice notice-action">
@@ -348,12 +351,20 @@ export function renderExerciseBlock(workout, ex, isGroupStart, isGroupEnd, isFir
 // progression the weight sits flat for weeks while reps climb, so weight
 // alone looks like no progress; volume moves with both. Deliberately not an
 // estimated 1RM: one rep/weight curve does not fit light and heavy lifts
-// (see pctPerRep in progression.js). Needs at least two sessions.
+// (see pctPerRep in progression.js). Needs at least two sessions. One point
+// per date: a day with the exercise in two slots counts as one session. Only
+// the latest 12 dates, so each point stays big enough to tap.
 function renderProgressCharts(rows) {
-  const sessions = rows
-    .map((r) => ({ label: formatShortDate(r.date), sets: r.sets.filter(isCompleteSet) }))
-    .filter((r) => r.sets.length > 0)
-    .reverse();
+  const byDate = new Map();
+  for (const r of rows) {
+    const sets = r.sets.filter(isCompleteSet);
+    if (sets.length) byDate.set(r.date, [...(byDate.get(r.date) || []), ...sets]);
+  }
+  const sessions = [...byDate]
+    .sort((a, b) => (a[0] < b[0] ? 1 : -1))
+    .slice(0, 12)
+    .reverse()
+    .map(([date, sets]) => ({ label: formatShortDate(date), sets }));
   if (sessions.length < 2) return "";
   return `<div class="charts">
     ${renderLineChart("Top set", "lb", sessions.map((r) => ({ label: r.label, value: Math.max(...r.sets.map((s) => s.weight)) })))}
@@ -379,7 +390,7 @@ export function renderHistorySheet(ex) {
       ${rows.length === 0
         ? `<p class="muted">No history yet.</p>`
         : rows.map((r) => `<div class="history-row">
-            <span class="muted">${formatDay(r.date)} · ${escapeHtml(r.dayName)}</span>
+            <span class="muted">${formatDay(r.date)} · <strong class="history-day">${escapeHtml(r.dayName)}</strong>${r.parts > 1 ? ` · ${r.part} of ${r.parts}` : ""}</span>
             <span class="set-chips">${r.sets.map((s) => isCompleteSet(s) ? `<span class="set-chip">${s.weight}×${s.reps}</span>` : `<span class="set-chip empty">—</span>`).join("")}</span>
           </div>`).join("")}
     </div>
@@ -581,14 +592,17 @@ export function handleTodayAction(action, btn, view) {
       // Sets belong to the exercise: anything already entered was the old
       // exercise's and would be saved as the new one's history, so the sets
       // start over with the new exercise's own predictions.
-      const fresh = buildPrefilledSets(
-        { id: slotId, exerciseId: exercise.id, targetSets: ex.sets.length, repRangeMin: ex.repRangeMin, repRangeMax: ex.repRangeMax, weightIncrementPct: ex.weightIncrementPct },
-        Store.getWorkouts(), workout.dayId, workout.date, exercise.name
-      );
+      const fresh = buildEntrySets(workout, { slotId, exerciseId: exercise.id, exerciseName: exercise.name, targetSets: ex.sets.length,
+        repRangeMin: ex.repRangeMin, repRangeMax: ex.repRangeMax, weightIncrementPct: ex.weightIncrementPct, order: ex.order });
       ex.sets.forEach((s, i) => {
         Object.assign(s, blankSet(i), { baseWeight: fresh[i].baseWeight, baseReps: fresh[i].baseReps });
       });
-      if (scope === "future") Store.updateExerciseSlot(meso.id, workout.dayId, slotId, { exerciseId: exercise.id });
+      // A one-off swap is flagged so reconciliation keeps it instead of
+      // rebuilding the entry to the template slot's exercise.
+      if (scope === "future") {
+        Store.updateExerciseSlot(meso.id, workout.dayId, slotId, { exerciseId: exercise.id });
+        delete ex.swapped;
+      } else ex.swapped = true;
       Store.updateWorkout(workout.id, { exercises: workout.exercises });
       closePanels();
     }
@@ -614,7 +628,9 @@ export function handleTodayAction(action, btn, view) {
       workout.exercises.push({
         slotId: newSlotId, exerciseId: exercise.id, exerciseName: exercise.name,
         order: workout.exercises.length, repRangeMin, repRangeMax, weightIncrementPct,
-        sets: Array.from({ length: targetSets }, (_, i) => blankSet(i)),
+        // Predicted from the exercise's history, like a substitute's sets.
+        sets: buildEntrySets(workout, { slotId: newSlotId, exerciseId: exercise.id, exerciseName: exercise.name, targetSets,
+          repRangeMin, repRangeMax, weightIncrementPct, order: workout.exercises.length }),
         // Not in the template — tells reconciliation to keep it anyway.
         ...(slot ? {} : { oneOff: true }),
       });

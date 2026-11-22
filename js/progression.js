@@ -94,27 +94,43 @@ export function isCompleteSet(s) {
 // stale (exercise removed from the library and re-created) — library names
 // are unique (Store.addExercise), so a name match is the same exercise.
 // With no exerciseId to look for, only the name can match: a missing id
-// would otherwise equal every other entry's missing id.
+// would otherwise equal every other entry's missing id. UNKNOWN_EXERCISE is
+// the name given to a slot whose exercise is not in the library: two
+// different missing exercises share it, so it never matches by name.
+export const UNKNOWN_EXERCISE = "(unknown exercise)";
+
 export function exerciseMatchers(slotId, exerciseId, exerciseName) {
+  const byName = exerciseName != null && exerciseName !== UNKNOWN_EXERCISE;
   return [
     (e) => exerciseId != null && e.exerciseId === exerciseId && e.slotId === slotId,
     (e) => exerciseId != null && e.exerciseId === exerciseId,
-    (e) => exerciseName != null && e.exerciseName === exerciseName,
+    (e) => byName && e.exerciseName === exerciseName,
   ];
 }
 
-export function findMatchingExercise(workout, matchers) {
+// A workout's entries matching one test, in their order on the screen.
+export function matchingEntries(workout, match) {
+  return workout.exercises.filter(match).sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+}
+
+// The one entry of `workout` that is the exercise meant: the most specific
+// matcher that finds any. When the slot itself is not there (a cloned
+// mesocycle's new slot ids) and the exercise has several entries, the
+// `occurrence`-th one (0-based, by order) stands for the occurrence-th slot of
+// that exercise on the day, or the last one when there are fewer.
+export function findMatchingExercise(workout, matchers, occurrence = 0) {
   for (const match of matchers) {
-    const ex = workout.exercises.find(match);
-    if (ex) return ex;
+    const hits = matchingEntries(workout, match);
+    if (hits.length) return hits[Math.min(occurrence, hits.length - 1)];
   }
   return null;
 }
 
 // Whether this workout's entry `ex` beat every earlier finished workout of
 // the same exercise: "weight" (heaviest complete set ever), else "reps" (a
-// set with more reps than any earlier set at that weight or heavier), else
-// null — also when there is nothing earlier to beat.
+// set with more reps than any earlier set at that weight or heavier, where
+// that exact weight was done before), else null — also when there is
+// nothing earlier to beat.
 export function exercisePR(workouts, workout, ex) {
   const matchers = exerciseMatchers(ex.slotId, ex.exerciseId, ex.exerciseName);
   const earlier = workouts
@@ -127,32 +143,34 @@ export function exercisePR(workouts, workout, ex) {
   if (heaviest(mine) > heaviest(earlier)) return "weight";
   const repPR = mine.some((s) => {
     const atLeast = earlier.filter((e) => e.weight >= s.weight);
-    return atLeast.length > 0 && s.reps > Math.max(...atLeast.map((e) => e.reps));
+    return atLeast.some((e) => e.weight === s.weight) && s.reps > Math.max(...atLeast.map((e) => e.reps));
   });
   return repPR ? "reps" : null;
 }
 
 // Find the most recent finished workout (date < beforeIsoDate) where this
 // exercise has a complete set at setIndex. Same day template first (the same
-// exercise can run heavier on one day than another); only when that day has
-// nothing does it fall back to any day — e.g. an exercise just swapped in,
-// or the first week of a new mesocycle (whose days all have new ids).
+// exercise can run heavier on one day than another), then a day of the same
+// name (a copied mesocycle has new day ids but keeps the names), and only
+// then any day — e.g. an exercise just swapped in.
 // Looked up per set, not per exercise: a set left blank last time (skipped,
 // since untouched predictions are never saved) falls back to the most
-// recent workout where it was actually logged.
-export function findLastLoggedSet(workouts, dayId, slotId, exerciseId, setIndex, beforeIsoDate, exerciseName) {
+// recent workout where it was actually logged. Each workout stands for one
+// entry (findMatchingExercise), so a skipped set never takes the set of
+// another slot of the same exercise. `occurrence`: see findMatchingExercise.
+export function findLastLoggedSet(workouts, dayId, slotId, exerciseId, setIndex, beforeIsoDate, exerciseName, dayName = null, occurrence = 0) {
   const candidates = workouts
     .filter((w) => w.finished && w.date < beforeIsoDate)
     .sort((a, b) => (a.date < b.date ? 1 : -1));
   const matchers = exerciseMatchers(slotId, exerciseId, exerciseName);
+  const pools = [candidates.filter((w) => w.dayId === dayId)];
+  if (dayName != null) pools.push(candidates.filter((w) => w.dayName === dayName));
+  pools.push(candidates);
 
-  for (const pool of [candidates.filter((w) => w.dayId === dayId), candidates]) {
-    // Newest workout first; the matcher order only decides within one workout.
+  for (const pool of pools) {
     for (const w of pool) {
-      for (const match of matchers) {
-        const ex = w.exercises.find(match);
-        if (ex && isCompleteSet(ex.sets[setIndex])) return ex.sets[setIndex];
-      }
+      const ex = findMatchingExercise(w, matchers, occurrence);
+      if (ex && isCompleteSet(ex.sets[setIndex])) return ex.sets[setIndex];
     }
   }
   return null;
@@ -165,11 +183,12 @@ export function blankSet(setIndex) {
 // Build a slot's sets for a new workout. weight/reps stay null — they only
 // ever hold what the user actually typed. The double-progression prediction
 // lives in baseWeight/baseReps and is shown as the inputs' placeholder.
-export function buildPrefilledSets(slot, workouts, dayId, beforeIsoDate, exerciseName) {
+// dayName and occurrence: see findLastLoggedSet (optional).
+export function buildPrefilledSets(slot, workouts, dayId, beforeIsoDate, exerciseName, dayName = null, occurrence = 0) {
   const sets = [];
   for (let i = 0; i < slot.targetSets; i++) {
     const set = blankSet(i);
-    const prevSet = findLastLoggedSet(workouts, dayId, slot.id, slot.exerciseId, i, beforeIsoDate, exerciseName);
+    const prevSet = findLastLoggedSet(workouts, dayId, slot.id, slot.exerciseId, i, beforeIsoDate, exerciseName, dayName, occurrence);
     const suggestion = prevSet && nextSet(prevSet, slot.repRangeMin, slot.repRangeMax, slot.weightIncrementPct ?? DEFAULT_INCREMENT_PCT);
     if (suggestion) {
       set.baseWeight = suggestion.weight;

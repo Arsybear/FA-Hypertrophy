@@ -64,6 +64,18 @@ export function cleanSetValue(field, raw) {
   return n >= 0 && n <= 2000 ? n : null;
 }
 
+// A mesocycle's start moved to startIso: shifts dated before it go (the key
+// too when none is left), so no shift starts before the mesocycle. Returns
+// whether anything changed.
+function dropShiftsBefore(meso, startIso) {
+  if (!meso.shifts) return false;
+  const kept = meso.shifts.filter((s) => s.date >= startIso);
+  if (kept.length === meso.shifts.length) return false;
+  if (kept.length) meso.shifts = kept;
+  else delete meso.shifts;
+  return true;
+}
+
 // Brings every number a mesocycle is built from into the range the forms
 // allow. Data saved by older versions (which did not clamp) and imported
 // backups both go through this, so the rest of the app can rely on it.
@@ -76,9 +88,15 @@ export function normalizeMesocycles(list) {
   for (const meso of list) {
     set(meso, "numWeeks", cleanCount(meso.numWeeks));
     // A start date Date cannot hold (a date input takes years up to 275760)
-    // blanks every screen that shows it, with no way back in the app.
-    if (typeof meso.startDate !== "string" || Number.isNaN(parseLocalDate(meso.startDate).getTime())) {
-      set(meso, "startDate", isoDate(new Date()));
+    // blanks every screen that shows it, with no way back in the app, and
+    // one that is not a real padded date fails the backup check. One that
+    // only lacks zero padding ("2026-9-1") is the same day written padded;
+    // anything else becomes today.
+    if (!isIsoDate(meso.startDate)) {
+      const m = typeof meso.startDate === "string" && /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(meso.startDate);
+      const padded = m && `${m[1]}-${m[2].padStart(2, "0")}-${m[3].padStart(2, "0")}`;
+      set(meso, "startDate", isIsoDate(padded) ? padded : isoDate(new Date()));
+      if (dropShiftsBefore(meso, meso.startDate)) changed = true;
     }
     for (const day of meso.days || []) {
       for (const slot of day.exercises || []) {
@@ -119,7 +137,9 @@ export const Store = {
   // Edits a library entry. Returns it, or null when the id is unknown, the
   // name is empty or another exercise has it. A rename is carried into every
   // logged workout of this exercise (by id, or by the old name for entries
-  // without one), so history keeps showing one name.
+  // without one), so history keeps showing one name. A name that workout
+  // entries of another exerciseId carry (a deleted exercise's history) is
+  // refused too: those entries would merge into this exercise by name.
   updateExercise(id, { name, muscleGroup, note } = {}) {
     const exercises = Store.getExercises();
     const ex = exercises.find((e) => e.id === id);
@@ -128,7 +148,12 @@ export const Store = {
     if (name !== undefined) {
       const clean = String(name).trim();
       if (!clean) return null;
-      if (exercises.some((e) => e.id !== id && e.name.toLowerCase() === clean.toLowerCase())) return null;
+      const lower = clean.toLowerCase();
+      if (exercises.some((e) => e.id !== id && e.name.toLowerCase() === lower)) return null;
+      const taken = Store.getWorkouts().some((w) => w.exercises.some((entry) => entry.exerciseId !== id
+        && typeof entry.exerciseName === "string" && entry.exerciseName.toLowerCase() === lower
+        && entry.exerciseName.toLowerCase() !== oldName.toLowerCase()));
+      if (taken) return null;
       ex.name = clean;
     }
     if (muscleGroup !== undefined) ex.muscleGroup = muscleGroup || "Other";
@@ -192,12 +217,12 @@ export const Store = {
     const meso = list.find((m) => m.id === mesoId);
     if (!meso) return null;
     // An unusable start date is ignored, like an empty one (see isIsoDate).
-    // A new start re-anchors the whole schedule, so its shifts go.
+    // A new start keeps the shifts on or after it; earlier ones go.
     const { startDate, ...rest } = updates;
     Object.assign(meso, rest);
     if (isIsoDate(startDate) && startDate !== meso.startDate) {
       meso.startDate = startDate;
-      delete meso.shifts;
+      dropShiftsBefore(meso, startDate);
     }
     Store.saveMesocycles(list);
     return meso;
@@ -285,7 +310,8 @@ export const Store = {
     const day = meso && meso.days.find((d) => d.id === dayId);
     if (!day) return;
     day.exercises = day.exercises.filter((e) => e.id !== slotId);
-    day.exercises.forEach((e, i) => (e.order = i));
+    // Renumbered in the order shown, not the order they were added.
+    [...day.exercises].sort((a, b) => a.order - b.order).forEach((e, i) => (e.order = i));
     Store.saveMesocycles(list);
   },
   updateExerciseSlot(mesoId, dayId, slotId, updates) {
@@ -421,14 +447,15 @@ export function validateBackup(data) {
   if (!isObj(data) || data.app !== BACKUP_APP) return "This is not an FA Hypertrophy backup file.";
   if (data.version !== 1) return "This backup was made by a newer version of the app.";
 
-  // Shifts: real dates, whole days 1-366, sorted and not overlapping.
-  const shiftsOk = (list) => list == null || (Array.isArray(list) && list.every((sh, i) =>
-    isObj(sh) && date(sh.date) && Number.isInteger(sh.days) && sh.days >= 1 && sh.days <= 366
+  // Shifts: real dates not before the start, whole days 1-366, sorted and
+  // not overlapping.
+  const shiftsOk = (list, start) => list == null || (Array.isArray(list) && list.every((sh, i) =>
+    isObj(sh) && date(sh.date) && sh.date >= start && Number.isInteger(sh.days) && sh.days >= 1 && sh.days <= 366
     && (i === 0 || isoDate(addDays(parseLocalDate(list[i - 1].date), list[i - 1].days)) <= sh.date)));
   const exercisesOk = all(data.exercises, (e) => id(e.id) && str(e.name) && (e.muscleGroup == null || str(e.muscleGroup))
     && (e.note == null || (str(e.note) && e.note.length <= 200)));
   const mesocyclesOk = all(data.mesocycles, (m) =>
-    id(m.id) && str(m.name) && num(m.numWeeks) && date(m.startDate) && typeof m.active === "boolean" && shiftsOk(m.shifts)
+    id(m.id) && str(m.name) && num(m.numWeeks) && date(m.startDate) && typeof m.active === "boolean" && shiftsOk(m.shifts, m.startDate)
     && all(m.days, (d) => id(d.id) && str(d.name) && optOffset(d.weekdayOffset) && optNum(d.order)
       && all(d.exercises, (slot) => id(slot.id) && id(slot.exerciseId) && num(slot.order) && num(slot.targetSets)
         && num(slot.repRangeMin) && num(slot.repRangeMax) && optNum(slot.weightIncrementPct))));
@@ -437,7 +464,7 @@ export function validateBackup(data) {
     && (w.finishedAt == null || str(w.finishedAt)) && optBool(w.makeup) && (w.makeupFor == null || date(w.makeupFor))
     && (w.skippedSlotIds == null || (Array.isArray(w.skippedSlotIds) && w.skippedSlotIds.every(id)))
     && all(w.exercises, (ex) => id(ex.slotId) && (ex.exerciseId == null || id(ex.exerciseId)) && str(ex.exerciseName)
-      && num(ex.order) && num(ex.repRangeMin) && num(ex.repRangeMax) && optNum(ex.weightIncrementPct) && optBool(ex.oneOff)
+      && num(ex.order) && num(ex.repRangeMin) && num(ex.repRangeMax) && optNum(ex.weightIncrementPct) && optBool(ex.oneOff) && optBool(ex.swapped)
       && all(ex.sets, (set) => optNum(set.weight) && optNum(set.reps) && optNum(set.baseWeight) && optNum(set.baseReps)
         && optNum(set.setIndex) && optBool(set.isLogged) && optBool(set.done) && optBool(set.prefilled) && optBool(set.repsManual))));
   if (!exercisesOk || !mesocyclesOk || !workoutsOk) return "This backup file is damaged or was edited. Nothing was imported.";

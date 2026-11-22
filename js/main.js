@@ -5,7 +5,7 @@ import * as ui from "./ui.js";
 import * as workout from "./workout.js";
 import { Store } from "./store.js";
 import { handleChartPoint } from "./chart.js";
-import { App, currentRoute, registerRoute, renderCurrentView, showStorageError } from "./ui.js";
+import { App, currentRoute, registerRoute, renderCurrentView, showStorageError, wrapOverlayFocus } from "./ui.js";
 import { handleSetDoneChange, handleTodayAction, handleTodayChange, renderToday } from "./views/today.js";
 import { handleProgramAction, handleProgramChange, renderProgram } from "./views/program.js";
 import { handleHistoryAction, renderHistory } from "./views/history.js";
@@ -120,6 +120,7 @@ window.addEventListener("DOMContentLoaded", () => {
   for (const type of ["pointerover", "pointerout", "click"]) document.getElementById("overlay-root").addEventListener(type, handleChartPoint);
   // Escape closes the open overlay, through the same action as its button.
   document.addEventListener("keydown", (e) => {
+    wrapOverlayFocus(e); // Tab stays inside an open overlay
     const close = e.key === "Escape" && document.querySelector('#overlay-root button[data-action^="close-"]');
     if (close) close.click();
   });

@@ -148,14 +148,53 @@ export function registerRoute(name, render) {
   routes[name] = render;
 }
 
+// The attributes that name a control across re-renders (innerHTML replaces
+// every node, so the focused one is gone after an action re-renders).
+const CONTROL_KEYS = ["action", "role", "slot", "day", "id", "set"];
+
+function controlSelector(el) {
+  if (!el || !el.dataset || !(el.dataset.action || el.dataset.role)) return null;
+  return CONTROL_KEYS.filter((k) => el.dataset[k] != null)
+    .map((k) => `[data-${k}="${cssEscape(el.dataset[k])}"]`).join("");
+}
+
 export function renderCurrentView() {
   const route = currentRoute();
   document.querySelectorAll(".nav-link").forEach((a) => {
     a.classList.toggle("active", a.dataset.route === route);
   });
-  document.getElementById("overlay-root").innerHTML = "";
-  (routes[route] || routes.today)(document.getElementById("view"));
+  // Remember the focused control, and which of its look-alikes it was (the
+  // two calendar-month buttons share every attribute but the month).
+  // Only keyboard focus (:focus-visible) is put back: after a tap, a focused
+  // control would draw a ring (or the input:focus border) nobody asked for.
+  const focused = document.activeElement;
+  const selector = focused && focused.matches(":focus-visible") ? controlSelector(focused) : null;
+  const index = selector ? [...document.querySelectorAll(selector)].indexOf(focused) : -1;
+  const overlay = document.getElementById("overlay-root");
+  const view = document.getElementById("view");
+  overlay.innerHTML = "";
+  (routes[route] || routes.today)(view);
+  // While an overlay is open the page behind it can't be reached.
+  const modal = overlay.childElementCount > 0;
+  view.inert = modal;
+  document.querySelector(".bottom-nav").inert = modal;
+  if (selector && !document.activeElement?.closest("#view, #overlay-root")) {
+    const again = document.querySelectorAll(selector)[index];
+    if (again && !again.inert && !again.closest("[inert]")) again.focus({ preventScroll: true });
+  }
   if (Store.writeFailed) showStorageError();
+}
+
+// Tab and Shift+Tab wrap inside an open overlay (main.js's keydown).
+export function wrapOverlayFocus(e) {
+  if (e.key !== "Tab") return;
+  const items = [...document.querySelectorAll("#overlay-root :is(a[href], button, input, select, [tabindex]):not(:disabled, [tabindex='-1'])")];
+  if (items.length === 0) return;
+  const first = items[0];
+  const last = items[items.length - 1];
+  const inside = items.includes(document.activeElement);
+  if (e.shiftKey && (document.activeElement === first || !inside)) { last.focus(); e.preventDefault(); }
+  else if (!e.shiftKey && (document.activeElement === last || !inside)) { first.focus(); e.preventDefault(); }
 }
 
 // Shown at the top of the screen once a write to storage has failed (see

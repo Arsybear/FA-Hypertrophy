@@ -40,7 +40,7 @@ export function renderLineChart(title, unit, points) {
       </g>`;
       }).join("")}
     </svg>
-    <div class="chart-axis muted"><span>${escapeHtml(points[0].label)}</span><span>${min === max ? fmt(min) : `${fmt(min)} – ${fmt(max)}`}</span><span>${escapeHtml(points[last].label)}</span></div>
+    <div class="chart-axis muted"><span>${escapeHtml(points[0].label)}</span><span>${min === max ? fmt(min) : `${Math.round(min * 10) / 10}–${fmt(max)}`}</span><span>${escapeHtml(points[last].label)}</span></div>
   </figure>`;
 }
 

@@ -9,6 +9,10 @@
   --border: #272c35;
   --text: #f1f3f6;
   --muted: #8f97a5;
+  /* Outline of an empty control repeated down a list (the set's done
+     circle): 3.2:1 on --surface, the minimum for a control's edge, so a
+     column of them stays quieter than the numbers beside it. */
+  --control-edge: #606876;
   /* Brand: mulberry. --accent is for fills (white text passes on it),
      --accent-soft for text, icons and outlines on the dark surfaces. */
   --accent: #b93a80;
@@ -131,6 +135,8 @@ h3 {
 /* A notice with its own action (Undo) on the right. */
 .notice-action { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
 .notice-action .btn { flex: none; }
+/* Why a makeup workout sits on this date: a record, not a call to act. */
+.makeup-line { margin: -6px 0 12px; }
 .icon { width: 20px; height: 20px; flex: none; }
 /* A meta line's parts ("6 weeks · starts Mon, Nov 2") wrap between parts,
    never inside one. */
@@ -231,10 +237,43 @@ input, select {
 }
 input:focus, select:focus { outline: none; border-color: var(--accent-soft); }
 input:disabled, select:disabled { opacity: 0.6; }
-input::placeholder { color: var(--muted); opacity: 0.75; }
+/* Full --muted (6.6:1 on --bg): readable, still well short of typed --text. */
+input::placeholder { color: var(--muted); opacity: 1; }
 input[type="number"] { font-variant-numeric: tabular-nums; -moz-appearance: textfield; }
 input[type="number"]::-webkit-inner-spin-button { -webkit-appearance: none; }
-input[type="radio"], .check-row input[type="checkbox"] { width: 20px; height: 20px; min-height: 0; margin: 0; flex: none; accent-color: var(--accent); }
+input[type="radio"] { width: 20px; height: 20px; min-height: 0; margin: 0; flex: none; accent-color: var(--accent); }
+/* The app's checkbox: a 24px box, --accent with a white tick when ticked.
+   Its row (a label) is the 44px tap target. */
+.check-row input[type="checkbox"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 24px;
+  height: 24px;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  flex: none;
+  border: 2px solid var(--muted);
+  border-radius: 6px;
+  background: var(--bg) center / 18px no-repeat;
+  cursor: pointer;
+}
+.check-row input[type="checkbox"]:checked {
+  border-color: var(--accent);
+  background-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23ffffff' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12 5 5 9-10'/%3E%3C/svg%3E");
+}
+.check-row input[type="checkbox"]:focus-visible { outline: 2px solid var(--accent-soft); outline-offset: 2px; }
+/* Ticked and locked (the app decided): grey box and text, so it reads as
+   set for you rather than as a choice. */
+.check-row input[type="checkbox"]:disabled { opacity: 1; cursor: default; }
+.check-row input[type="checkbox"]:checked:disabled {
+  border-color: var(--muted);
+  background-color: var(--muted);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%230b0d10' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m5 12 5 5 9-10'/%3E%3C/svg%3E");
+}
+.check-row { color: var(--text); cursor: pointer; }
+.check-row:has(input:disabled) { color: var(--muted); cursor: default; }
 label { display: block; margin-bottom: 10px; font-size: 13px; color: var(--muted); }
 /* A radio choice is one full-width row, tall enough to hit mid-set. */
 label:has(> input[type="radio"]), .check-row { display: flex; align-items: center; gap: 10px; min-height: var(--tap); margin: 0; font-size: 14px; }
@@ -432,7 +471,7 @@ label input, label select { margin-top: 4px; }
   margin: 0;
   padding: 0;
   border-radius: 50%;
-  border: 2px solid var(--border);
+  border: 2px solid var(--control-edge);
   background: var(--bg) center / 22px no-repeat;
   cursor: pointer;
 }
@@ -516,6 +555,8 @@ label input, label select { margin-top: 4px; }
 .ex-title .badge { margin-left: 8px; vertical-align: 1px; }
 .history-row { padding: 10px 0; border-top: 1px solid var(--border); }
 .history-row .muted { display: block; margin-bottom: 6px; }
+/* The day name tells the heavy day from the light day. */
+.history-day { color: var(--text); font-weight: 700; }
 .set-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .set-chip {
   padding: 4px 9px;
@@ -566,7 +607,9 @@ label input, label select { margin-top: 4px; }
 .chart-point rect { fill: transparent; }
 .chart-point circle { fill: var(--accent-soft); stroke: var(--surface-2); stroke-width: 2; opacity: 0; }
 .chart-point.is-last circle, .chart-point.active circle { opacity: 1; }
-.chart-axis { display: flex; justify-content: space-between; gap: 6px; margin-top: 4px; font-size: 10px; font-variant-numeric: tabular-nums; }
+.chart-axis { display: flex; justify-content: space-between; gap: 6px; margin-top: 4px; font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* At 360px a 5-digit volume range is the widest part: it gives way first. */
+.chart-axis span:nth-child(2) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 /* ---------- settings ---------- */
 .ok-text { color: var(--success); font-size: 13px; margin: 6px 0; }

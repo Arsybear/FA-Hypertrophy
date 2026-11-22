@@ -1,25 +1,49 @@
 import { Store } from "./store.js";
 import { addDays, daysBetween, isIsoDate, isoDate, parseLocalDate, resolveDayForDate, schedulePosition } from "./schedule.js";
-import { DEFAULT_INCREMENT_PCT, blankSet, buildPrefilledSets, exerciseMatchers, findMatchingExercise } from "./progression.js";
+import { DEFAULT_INCREMENT_PCT, UNKNOWN_EXERCISE, buildPrefilledSets, exerciseMatchers, matchingEntries } from "./progression.js";
+
+// How many of the slots or workout entries in `list` hold the same exercise
+// as `item` and sit before it in order: the "occurrence" of
+// findMatchingExercise in progression.js (k-th slot of an exercise on a day).
+function occurrenceIn(list, item) {
+  const key = (e) => e.exerciseId ?? e.exerciseName;
+  return list.filter((e) => e !== item && key(e) === key(item) && (e.order ?? 0) < (item.order ?? 0)).length;
+}
+
+// The sets, with predictions, for one entry of `workout`: entry is
+// { slotId, exerciseId, exerciseName, targetSets, repRangeMin, repRangeMax,
+// weightIncrementPct, order } (order: where it sits or will sit). Predicted
+// as of the workout's date, from the same day, then a day of the same name,
+// then any day; the k-th entry of an exercise follows the k-th of history.
+// Every caller that builds an entry's sets outside generateWorkout uses this,
+// so a swap or an added exercise follows the same history as everything else.
+export function buildEntrySets(workout, entry, history = Store.getWorkouts()) {
+  return buildPrefilledSets({
+    id: entry.slotId, exerciseId: entry.exerciseId, targetSets: entry.targetSets,
+    repRangeMin: entry.repRangeMin, repRangeMax: entry.repRangeMax, weightIncrementPct: entry.weightIncrementPct,
+  }, history, workout.dayId, workout.date, entry.exerciseName, workout.dayName, occurrenceIn(workout.exercises, entry));
+}
+
+// A workout entry for a template slot, with fresh predictions as of dateIso.
+function entryFromSlot(slot, dayTemplate, daySlots, dateIso, order, library, workouts) {
+  const exercise = library.find((e) => e.id === slot.exerciseId);
+  return {
+    slotId: slot.id,
+    exerciseId: slot.exerciseId,
+    exerciseName: exercise ? exercise.name : UNKNOWN_EXERCISE,
+    order,
+    repRangeMin: slot.repRangeMin,
+    repRangeMax: slot.repRangeMax,
+    weightIncrementPct: slot.weightIncrementPct ?? DEFAULT_INCREMENT_PCT,
+    sets: buildPrefilledSets(slot, workouts, dayTemplate.id, dateIso, exercise && exercise.name, dayTemplate.name, occurrenceIn(daySlots, slot)),
+  };
+}
 
 export function generateWorkout(meso, dayTemplate, dateIso) {
   const workouts = Store.getWorkouts();
   const library = Store.getExercises();
   const sortedSlots = [...dayTemplate.exercises].sort((a, b) => a.order - b.order);
-  const exercises = sortedSlots.map((slot, idx) => {
-    const exercise = library.find((e) => e.id === slot.exerciseId);
-    const sets = buildPrefilledSets(slot, workouts, dayTemplate.id, dateIso, exercise && exercise.name);
-    return {
-      slotId: slot.id,
-      exerciseId: slot.exerciseId,
-      exerciseName: exercise ? exercise.name : "(unknown exercise)",
-      order: idx,
-      repRangeMin: slot.repRangeMin,
-      repRangeMax: slot.repRangeMax,
-      weightIncrementPct: slot.weightIncrementPct ?? DEFAULT_INCREMENT_PCT,
-      sets,
-    };
-  });
+  const exercises = sortedSlots.map((slot, idx) => entryFromSlot(slot, dayTemplate, sortedSlots, dateIso, idx, library, workouts));
   return Store.createWorkout({
     mesocycleId: meso.id,
     date: dateIso,
@@ -40,29 +64,38 @@ export function generateWorkout(meso, dayTemplate, dateIso) {
 // `workout.skippedSlotIds` (so it isn't re-added). Ordering: template-backed
 // exercises follow the template's relative order, within the positions they
 // already occupy — one-off exercises keep their own positions.
+// An exercise whose slot left the program goes, unless a set of it is
+// already touched: then it stays, as this workout's own (oneOff). An
+// untouched entry whose exercise differs from its slot's (the slot was
+// swapped for all future elsewhere) is rebuilt to the slot's exercise,
+// unless it was swapped for this workout only (`swapped: true`).
 export function reconcileWorkoutWithTemplate(workout, dayTemplate) {
   const templateSlots = [...dayTemplate.exercises].sort((a, b) => a.order - b.order);
   const templateIds = new Set(templateSlots.map((s) => s.id));
   const skipped = new Set(workout.skippedSlotIds || []);
+  const library = Store.getExercises();
+  const history = Store.getWorkouts();
   let changed = false;
 
-  const before = workout.exercises.length;
-  workout.exercises = workout.exercises.filter((ex) => ex.oneOff || templateIds.has(ex.slotId));
-  if (workout.exercises.length !== before) changed = true;
+  workout.exercises = workout.exercises.filter((ex) => {
+    if (ex.oneOff || templateIds.has(ex.slotId)) return true;
+    changed = true;
+    if (!ex.sets.some(isTouchedSet)) return false;
+    ex.oneOff = true;
+    return true;
+  });
 
   templateSlots.forEach((slot, idx) => {
     if (skipped.has(slot.id)) return;
     const existing = workout.exercises.find((ex) => ex.slotId === slot.id);
     const pct = slot.weightIncrementPct ?? DEFAULT_INCREMENT_PCT;
     if (!existing) {
-      const exercise = Store.getExercises().find((e) => e.id === slot.exerciseId);
-      workout.exercises.push({
-        slotId: slot.id, exerciseId: slot.exerciseId,
-        exerciseName: exercise ? exercise.name : "(unknown exercise)",
-        order: workout.exercises.length + idx, repRangeMin: slot.repRangeMin, repRangeMax: slot.repRangeMax,
-        weightIncrementPct: pct,
-        sets: buildPrefilledSets(slot, Store.getWorkouts(), dayTemplate.id, workout.date, exercise && exercise.name),
-      });
+      workout.exercises.push(entryFromSlot(slot, dayTemplate, templateSlots, workout.date, workout.exercises.length + idx, library, history));
+      changed = true;
+      return;
+    }
+    if (existing.exerciseId !== slot.exerciseId && !existing.swapped && !existing.sets.some(isTouchedSet)) {
+      Object.assign(existing, entryFromSlot(slot, dayTemplate, templateSlots, workout.date, existing.order, library, history));
       changed = true;
       return;
     }
@@ -72,9 +105,10 @@ export function reconcileWorkoutWithTemplate(workout, dayTemplate) {
       changed = true;
     }
     if (existing.sets.length < slot.targetSets) {
-      for (let i = existing.sets.length; i < slot.targetSets; i++) {
-        existing.sets.push(blankSet(i));
-      }
+      // The new sets get their own predictions, for this entry's exercise
+      // (a this-workout-only swap keeps its own numbers).
+      const fresh = buildEntrySets(workout, { ...existing, targetSets: slot.targetSets }, history);
+      existing.sets.push(...fresh.slice(existing.sets.length));
       changed = true;
     }
     // Fewer target sets: drop trailing sets, but never one already typed into.
@@ -106,13 +140,16 @@ export function reconcileWorkoutWithTemplate(workout, dayTemplate) {
 // baseWeight/baseReps, now shown as the placeholder). New sets never have
 // the `prefilled` key, so this only ever runs once per old set. Runs on any
 // unfinished workout, past or present — unlike template reconciliation.
+// A set ticked done (a reopened workout) is logged. An unlogged set with a
+// weight that is not a prediction got it carried from another set, which
+// today's model keeps as a real value: only its reps go.
 export function migrateLegacyPrefill(workout) {
   let changed = false;
   workout.exercises.forEach((ex) => ex.sets.forEach((s) => {
     if (!("prefilled" in s)) return;
-    if (!s.isLogged) {
+    if (!s.isLogged && !s.done) {
       if (s.prefilled && s.baseWeight == null) { s.baseWeight = s.weight; s.baseReps = s.reps; }
-      s.weight = null;
+      if (s.prefilled) s.weight = null;
       s.reps = null;
     }
     delete s.prefilled;
@@ -135,6 +172,11 @@ export function isTouchedSet(s) {
 }
 
 const isTouchedWorkout = (w) => w.exercises.some((ex) => ex.sets.some(isTouchedSet));
+// Finished or touched: the user did something with this workout.
+const isUsed = (w) => w.finished || isTouchedWorkout(w);
+
+// How far back findMissedDay looks (a shift is at most 366 days).
+const MAX_MISSED_SCAN_DAYS = 366;
 
 export function getTodayContext() {
   const realTodayIso = isoDate(new Date());
@@ -173,84 +215,94 @@ function contextFor(dateIso, realTodayIso) {
   } else if (!workout && dayTemplate && dateIso <= realTodayIso) {
     workout = generateWorkout(meso, dayTemplate, dateIso);
   }
-  const missed = findMissedDay(meso, Store.getWorkouts(), dateIso, realTodayIso);
-  return { meso, dayTemplate, workout, dateIso, isToday, missed, madeUp: madeUpState(meso, workout, dateIso) };
+  const move = workout ? undoableMove(meso, dateIso) : null;
+  const madeUp = move && (move.shift ? { dateIso: move.shift.date, shifted: true } : { dateIso: move.workout.makeupFor, shifted: false });
+  // Never both: the missed card and the "moved here / Undo" notice.
+  const missed = madeUp ? null : findMissedDay(meso, Store.getWorkouts(), dateIso, realTodayIso);
+  return { meso, dayTemplate, workout, dateIso, isToday, missed, madeUp };
 }
 
-// The missed-day move that undoMissedDay can still take back: the workout at
-// the date is untouched and is a makeup, or the date ends a shift's gap.
-function madeUpState(meso, workout, dateIso) {
-  if (!workout || workout.finished || isTouchedWorkout(workout)) return null;
-  if (workout.makeup) return { dateIso: workout.makeupFor, shifted: false };
-  const shift = shiftEndingAt(meso, dateIso);
-  return shift ? { dateIso: shift.date, shifted: true } : null;
-}
-
-function shiftEndingAt(meso, dateIso) {
-  return (meso.shifts || []).find((s) => isoDate(addDays(parseLocalDate(s.date), s.days)) === dateIso) || null;
+// The missed-day move on date X that undoMissedDay can still take back, as
+// { shift, workout } (shift null for a makeup), or null. Nothing of this
+// mesocycle may be finished or touched on X or later, and X must end the
+// LAST shift's gap (an earlier one has later shifts built on it) or hold a
+// makeup workout.
+function undoableMove(meso, dateIso) {
+  const mine = Store.getWorkouts().filter((w) => w.mesocycleId === meso.id);
+  if (mine.some((w) => w.date >= dateIso && isUsed(w))) return null;
+  const workout = mine.find((w) => w.date === dateIso) || null;
+  const shifts = meso.shifts || [];
+  const shift = shifts.find((s) => isoDate(addDays(parseLocalDate(s.date), s.days)) === dateIso);
+  if (shift) return shift === shifts[shifts.length - 1] ? { shift, workout } : null;
+  return workout && workout.makeup ? { shift: null, workout } : null;
 }
 
 // The earliest training day missed right before the viewed date X, which can
 // still be done on X: nothing of this mesocycle is logged or finished on X or
-// later, and the scan back from X - 1 stops at a gap day, a day with a
-// logged or finished workout, or a day already made up. Earliest, so after
-// two missed sessions the first is resumed and the program keeps its order.
+// later, and the scan back from X - 1 (at most MAX_MISSED_SCAN_DAYS) stops
+// at a gap day, a day with a logged or finished workout, or a day made up by
+// a logged or finished makeup. Earliest, so after two missed sessions the
+// first is resumed and the program keeps its order.
 export function findMissedDay(meso, workouts, dateIso, todayIso) {
   if (dateIso < meso.startDate || dateIso > todayIso) return null;
   const mine = workouts.filter((w) => w.mesocycleId === meso.id);
-  const used = (w) => w.finished || isTouchedWorkout(w);
-  if (mine.some((w) => w.date >= dateIso && used(w))) return null;
-  const blocked = new Set(mine.filter(used).map((w) => w.date));
-  mine.forEach((w) => { if (w.makeupFor) blocked.add(w.makeupFor); });
+  if (mine.some((w) => w.date >= dateIso && isUsed(w))) return null;
+  const blocked = new Set();
+  mine.filter(isUsed).forEach((w) => {
+    blocked.add(w.date);
+    if (w.makeupFor) blocked.add(w.makeupFor);
+  });
+  const x = parseLocalDate(dateIso);
   let found = null;
-  for (let d = addDays(parseLocalDate(dateIso), -1); isoDate(d) >= meso.startDate; d = addDays(d, -1)) {
-    if (blocked.has(isoDate(d)) || schedulePosition(meso, d).gap) break;
+  for (let n = 1; n <= MAX_MISSED_SCAN_DAYS; n++) {
+    const d = addDays(x, -n);
+    const iso = isoDate(d);
+    if (iso < meso.startDate || blocked.has(iso) || schedulePosition(meso, d).gap) break;
     const dayTemplate = resolveDayForDate(meso, d);
-    if (dayTemplate) found = { dateIso: isoDate(d), dayTemplate };
+    if (dayTemplate) found = { dateIso: iso, dayTemplate };
   }
   return found;
 }
 
 const removeUntouchedFrom = (mesoId, fromIso) => Store.saveWorkouts(Store.getWorkouts()
-  .filter((w) => !(w.mesocycleId === mesoId && w.date >= fromIso && !w.finished && !isTouchedWorkout(w))));
+  .filter((w) => !(w.mesocycleId === mesoId && w.date >= fromIso && !isUsed(w))));
 
 // Does the missed day M on the viewed date X. With `shift`, the rest of the
 // mesocycle moves out by the days between (X then trains M's day); without,
-// only this workout moves, which needs X to be a rest day. Returns the
-// workout for X, or null when nothing was done.
+// only this workout moves, which needs X to be a rest day. An untouched
+// makeup already made for M elsewhere is replaced. Returns the workout for
+// X, or null when nothing was done.
 export function doMissedDay(meso, dateIso, todayIso, shift) {
   const missed = findMissedDay(meso, Store.getWorkouts(), dateIso, todayIso);
   if (!missed) return null;
+  if (!shift && resolveDayForDate(meso, parseLocalDate(dateIso))) return null;
+  const all = Store.getWorkouts();
+  const kept = all.filter((w) => !(w.mesocycleId === meso.id && w.makeupFor === missed.dateIso && !isUsed(w)));
+  if (kept.length !== all.length) Store.saveWorkouts(kept);
   if (shift) {
     Store.addShift(meso.id, missed.dateIso, daysBetween(parseLocalDate(missed.dateIso), parseLocalDate(dateIso)));
     removeUntouchedFrom(meso.id, missed.dateIso);
     return contextFor(dateIso, todayIso).workout;
   }
-  if (resolveDayForDate(meso, parseLocalDate(dateIso))) return null;
   const stale = Store.findWorkoutByDate(meso.id, dateIso);
-  if (stale && !stale.finished && !isTouchedWorkout(stale)) Store.removeWorkout(stale.id);
+  if (stale && !isUsed(stale)) Store.removeWorkout(stale.id);
   const workout = generateWorkout(meso, missed.dayTemplate, dateIso);
   return Store.updateWorkout(workout.id, { makeup: true, makeupFor: missed.dateIso });
 }
 
-// Takes back doMissedDay while the workout at X is still untouched. Returns
-// whether anything was undone.
+// Takes back doMissedDay while it can be (see undoableMove; a missing
+// workout at X counts as untouched). Returns whether anything was undone.
 export function undoMissedDay(meso, dateIso) {
   const current = Store.getMesocycles().find((m) => m.id === meso.id);
-  if (!current) return false;
-  const workout = Store.findWorkoutByDate(current.id, dateIso);
-  if (workout && (workout.finished || isTouchedWorkout(workout))) return false;
-  const shift = shiftEndingAt(current, dateIso);
-  if (shift) {
-    Store.removeShift(current.id, shift.date);
-    removeUntouchedFrom(current.id, shift.date);
-    return true;
+  const move = current && undoableMove(current, dateIso);
+  if (!move) return false;
+  if (move.shift) {
+    Store.removeShift(current.id, move.shift.date);
+    removeUntouchedFrom(current.id, move.shift.date);
+  } else {
+    Store.removeWorkout(move.workout.id);
   }
-  if (workout && workout.makeup) {
-    Store.removeWorkout(workout.id);
-    return true;
-  }
-  return false;
+  return true;
 }
 
 // Rebuilds the predictions of every exercise not yet started in any
@@ -264,10 +316,7 @@ export function refreshPredictions() {
     if (w.finished) continue;
     for (const ex of w.exercises) {
       if (ex.sets.some(isTouchedSet)) continue;
-      const fresh = buildPrefilledSets({
-        id: ex.slotId, exerciseId: ex.exerciseId, targetSets: ex.sets.length,
-        repRangeMin: ex.repRangeMin, repRangeMax: ex.repRangeMax, weightIncrementPct: ex.weightIncrementPct,
-      }, workouts, w.dayId, w.date, ex.exerciseName);
+      const fresh = buildEntrySets(w, { ...ex, targetSets: ex.sets.length }, workouts);
       ex.sets.forEach((s, i) => {
         if (s.baseWeight !== fresh[i].baseWeight || s.baseReps !== fresh[i].baseReps) {
           s.baseWeight = fresh[i].baseWeight;
@@ -280,17 +329,23 @@ export function refreshPredictions() {
   if (changed) Store.saveWorkouts(workouts);
 }
 
-// Every finished workout, any day or mesocycle, that logged this exercise
-// (see exerciseMatchers in progression.js: by exercise, never by slot).
+// Every entry of this exercise in every finished workout, any day or
+// mesocycle: newest workout first, one workout's entries in order. Matched
+// by exerciseId, else (no entry of it in that workout) by name — see
+// exerciseMatchers in progression.js. Each row says which of how many
+// entries of the exercise that workout had (`part` of `parts`), so the same
+// exercise done twice in a day shows as two labelled rows. slotId is kept
+// for callers; it does not narrow the result.
 export function getExerciseHistory(slotId, exerciseId, exerciseName) {
-  const matchers = exerciseMatchers(slotId, exerciseId, exerciseName);
+  const [, byId, byName] = exerciseMatchers(slotId, exerciseId, exerciseName);
   const rows = [];
   Store.getWorkouts()
     .filter((w) => w.finished)
     .sort((a, b) => (a.date < b.date ? 1 : -1))
     .forEach((w) => {
-      const ex = findMatchingExercise(w, matchers);
-      if (ex) rows.push({ date: w.date, dayName: w.dayName, sets: ex.sets });
+      const byIdHits = matchingEntries(w, byId);
+      const entries = byIdHits.length ? byIdHits : matchingEntries(w, byName);
+      entries.forEach((ex, i) => rows.push({ date: w.date, dayName: w.dayName, sets: ex.sets, part: i + 1, parts: entries.length }));
     });
   return rows;
 }
