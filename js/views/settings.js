@@ -249,9 +249,9 @@ export function handleSettingsChange(target) {
   const active = Store.getActiveMesocycle();
   if (!active) return;
   const [field, parse] = mapping;
-  // A cleared name or start date is not saved (an empty start date would
-  // turn every day into a rest day); the box goes back to the stored value.
-  if (field !== "numWeeks" && !target.value.trim()) { target.value = active[field]; return; }
+  // A cleared box is not saved (an empty start date would turn every day into
+  // a rest day, an empty weeks box read as 1); it goes back to the stored value.
+  if (!target.value.trim()) { target.value = active[field]; return; }
   // A date the schedule can't use (year 275760) is not saved either.
   if (field === "startDate" && !isIsoDate(target.value)) { target.value = active.startDate; return; }
   Store.updateMesocycle(active.id, { [field]: parse(target.value) });

@@ -30,7 +30,7 @@ export function renderHistory(container) {
           <span class="history-entry-titles">
             <strong>${escapeHtml(w.dayName)}</strong>
             <span class="muted">${metaLine([plural(w.exercises.length, "exercise"), plural(setCount, "set")])}</span>
-            <span class="muted">${metaLine([meso && meso.name, String(year)])}</span>
+            <span class="muted">${meso && meso.name ? `${escapeHtml(meso.name)} · ` : ""}<span class="nowrap">${year}</span></span>
           </span>
           ${icon(open ? "up" : "down")}
         </button>

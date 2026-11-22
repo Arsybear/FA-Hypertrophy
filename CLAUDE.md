@@ -163,7 +163,9 @@ dark surfaces. Green (`--success`) means done, amber (`--warn`) in progress
 — in the week strip, the calendar, set rows and the progress bar alike.
 Status is never colour alone: a done day is a filled dot, a day in progress
 a ring, and both words are in the day's `aria-label`. "In progress" means
-any set touched, for the dot and for Today's status pill alike.
+any set touched, for the dot and for Today's status pill alike; typing a
+set value never re-renders, so `syncDayStatus` (`js/views/today.js`) patches
+the pill, the week-strip day and the open calendar's cell in place.
 Inputs are 16px (anything smaller makes iOS zoom the page on focus) and tap
 targets are at least 44px (`--tap`). Prediction placeholders are `--muted`
 at full opacity (above 4.5:1 on the input, and lighter in weight than a
@@ -721,6 +723,9 @@ moment so the value lands on the route and day the box was drawn for.
 A global delegated `click` and `change` listener is attached **once** to
 the `#view` container at startup (`handleGlobalClick`/`handleGlobalChange`),
 dispatching by `currentRoute()` and `data-action`/`data-role` attributes.
+`currentRoute()` returns "today" for any name that is not a registered
+route, so a mistyped address draws Today with working handlers (it used to
+draw Today with none: a typed set value showed and was not saved).
 `handleGlobalClick` is also attached to `#overlay-root` (see above) for the
 same reason — it doesn't close over anything from the listener itself, just
 re-derives state from `Store`/`currentRoute()`, so the same function safely
@@ -746,6 +751,10 @@ but only when that focus was `:focus-visible`: a touch tap must not leave a
 focus ring behind. When the action removed that control (a form opened in
 its place, or closed), keyboard focus moves to the form that opened for the
 same item, else to that item's own buttons, instead of falling to `<body>`.
+A control that is still there but disabled itself (Up on the card that
+became first, Previous month at the start month) hands focus to its
+opposite move button, else to the nearest enabled control beside it
+(`nearestEnabled`).
 
 Ephemeral UI state (which inline form/history panel is open) lives in the
 module-level `App.ui` object, reset on every `hashchange` but preserved

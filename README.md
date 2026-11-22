@@ -8,9 +8,9 @@ prefill (no RIR tracking, no volume-landmark dashboard).
 
 - Mesocycles scheduled on literal days of the week, with rest days wherever
   you leave a gap.
-- Programmable training days: add, remove and reorder days and exercises,
-  create new exercises, swap an exercise for one workout or for all future
-  workouts of that day.
+- Programmable training days: add and remove days, add, remove and reorder
+  exercises, create new exercises, swap an exercise for one workout or for
+  all future workouts of that day.
 - Double-progression predictions: each set shows the next weight and reps to
   beat as a greyed hint, from the last time you logged that exercise. Tick a
   set to log it exactly as predicted.

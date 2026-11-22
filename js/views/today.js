@@ -18,6 +18,34 @@ function workoutStatusClass(workout) {
 // (the dot alone is colour and shape only).
 const STATUS_TEXT = { finished: "finished", started: "in progress" };
 
+// Today's status pill: the same status, capitalised.
+function statusPillText(workout) {
+  return { finished: "Finished", started: "In progress" }[workoutStatusClass(workout)] || "Not started";
+}
+
+// Typing does not re-render (see handleTodayChange), so the pill and the
+// viewed day's link in the week strip and the open calendar are patched in
+// place to what a render would draw now: the first value typed starts the
+// day, clearing the last one un-starts it. Nodes are changed, never replaced,
+// so the user's next tap still lands.
+function syncDayStatus(meso, dateIso, workout) {
+  const view = document.getElementById("view");
+  const pill = view.querySelector(".status-pill");
+  if (pill) pill.textContent = statusPillText(workout);
+  const fresh = document.createElement("template");
+  fresh.innerHTML = renderDateNav(meso, dateIso, true, "");
+  const links = `:is(a.week-day, a.cal-cell)[href="#/today?date=${dateIso}"]`;
+  const drawn = fresh.content.querySelectorAll(links);
+  view.querySelectorAll(links).forEach((a, i) => {
+    const f = drawn[i];
+    if (!f) return;
+    if (a.className !== f.className) a.className = f.className;
+    if (a.getAttribute("aria-label") !== f.getAttribute("aria-label")) a.setAttribute("aria-label", f.getAttribute("aria-label"));
+    // Only a day the schedule no longer trains gains or loses its dot.
+    if (a.innerHTML !== f.innerHTML) a.innerHTML = f.innerHTML;
+  });
+}
+
 // The workouts the week strip and the calendar draw, by date. An untouched
 // one is left out: it shows exactly as the schedule says anyway, and one left
 // behind by a schedule change (start date edited, day removed) is dropped
@@ -155,7 +183,7 @@ function renderNotices(meso, dayTemplate, workout, dateIso, isToday, madeUp) {
   }
   const plannedEnd = plannedEndIso(meso);
   if (isToday && dateIso > plannedEnd) {
-    notes.push(`The ${meso.numWeeks} planned weeks of this mesocycle ended ${formatShortDate(plannedEnd)}. Keep going, or <a href="#/settings">copy it in Settings</a> to start the next one.`);
+    notes.push(`The ${plural(meso.numWeeks, "planned week")} of this mesocycle ended ${formatShortDate(plannedEnd)}. Keep going, or <a href="#/settings">copy it in Settings</a> to start the next one.`);
   }
   // A makeup sits off its schedule on purpose: say why once it is under way
   // (while untouched, the "moved here" notice with Undo says it).
@@ -269,7 +297,7 @@ export function renderToday(container) {
     <div class="progress-card ${workout.finished ? "finished" : ""}">
       <div class="progress-text">
         <span class="progress-count"><strong>${doneSets}</strong> / ${plural(allSets.length, "set")}</span>
-        <span class="status-pill">${{ finished: "Finished", started: "In progress" }[workoutStatusClass(workout)] || "Not started"}</span>
+        <span class="status-pill">${statusPillText(workout)}</span>
       </div>
       <div class="progress-track"><div class="progress-fill" style="width:${allSets.length ? (100 * doneSets) / allSets.length : 0}%"></div></div>
     </div>
@@ -601,6 +629,10 @@ export function handleTodayAction(action, btn, view) {
       : Store.getExercises().find((x) => select && x.id === select.value);
     if (!exercise) {
       App.ui.formError = NOTHING_CHOSEN;
+    } else if (exercise.id === ex.exerciseId || exercise.name.toLowerCase() === (ex.exerciseName || "").toLowerCase()) {
+      // Its own name typed in: a swap would only blank the sets. By name too:
+      // an old entry has no exerciseId, and library names are unique.
+      App.ui.formError = "That exercise is already in this slot. Choose another one.";
     } else {
       ex.exerciseId = exercise.id;
       ex.exerciseName = exercise.name;
@@ -764,7 +796,7 @@ export function refreshRepsHint(ex, index) {
 }
 
 export function handleTodayChange(target) {
-  const { workout } = getTodayContext();
+  const { meso, workout, dateIso } = getTodayContext();
   if (!workout) return;
   const slotId = target.dataset.slot;
   const setIndex = Number(target.dataset.set);
@@ -803,6 +835,7 @@ export function handleTodayChange(target) {
   }
 
   Store.updateWorkout(workout.id, { exercises: workout.exercises });
+  syncDayStatus(meso, dateIso, workout);
   // No renderCurrentView() here: a full re-render would replace the input
   // DOM nodes out from under the user's next click/tab while filling in a
   // table of set rows, silently dropping focus (and whatever they typed

@@ -105,8 +105,11 @@ export function renderMinStepInput(dataRole, value, dataAttrs = "") {
     data-role="${dataRole}" ${dataAttrs} value="${escapeHtml(value ?? "")}">`;
 }
 
+// An unknown name (#/bogus) is Today, so the screen drawn, the active nav
+// link and the handlers agree.
 export function currentRoute() {
-  return (location.hash.replace(/^#\/?/, "") || "today").split("?")[0];
+  const name = location.hash.replace(/^#\/?/, "").split("?")[0];
+  return Object.hasOwn(routes, name) ? name : "today";
 }
 
 export function emptyMesoState() {
@@ -183,6 +186,26 @@ function controlSelector(el) {
     .map((k) => `[data-${k}="${cssEscape(el.dataset[k])}"]`).join("");
 }
 
+// A focused control that disabled itself (Up on what is now the first card,
+// Previous month at the start month) cannot take focus back: a move button
+// goes to the same item's opposite move button, else the nearest enabled
+// control in the same parent, by order, the following one on a tie.
+const OPPOSITE_MOVE = { "move-up": "move-down", "move-down": "move-up", "move-slot-up": "move-slot-down", "move-slot-down": "move-slot-up" };
+
+function nearestEnabled(el) {
+  const opposite = OPPOSITE_MOVE[el.dataset.action];
+  const twin = opposite && document.querySelector(controlSelector({ dataset: { ...el.dataset, action: opposite } }));
+  if (twin && !twin.matches(":disabled")) return twin;
+  const items = [...el.parentElement.querySelectorAll(":is(a[href], input, select, textarea, button)")];
+  const at = items.indexOf(el);
+  for (let d = 1; d < items.length; d++) {
+    for (const other of [items[at + d], items[at - d]]) {
+      if (other && !other.matches(":disabled")) return other;
+    }
+  }
+  return null;
+}
+
 let lastRoute = null;
 
 export function renderCurrentView() {
@@ -213,7 +236,8 @@ export function renderCurrentView() {
   document.querySelector(".bottom-nav").inert = modal;
   if (selector && !document.activeElement?.closest("#view, #overlay-root")) {
     const usable = (el) => el && !el.closest("[inert]") ? el : null;
-    const again = usable(document.querySelectorAll(selector)[index]);
+    const found = document.querySelectorAll(selector)[index];
+    const again = usable(found && found.matches(":disabled") ? nearestEnabled(found) : found);
     // The control is gone (Remove opens a form in place of the menu, Cancel
     // closes the form): focus the form that opened for the same item, else any
     // form that opened, else the item's own controls, else the main button,
@@ -224,7 +248,7 @@ export function renderCurrentView() {
       (key && usable(view.querySelector(`.inline-form${key} ${control}`)))
       || (!key && usable(view.querySelector(`.inline-form ${control}`)))
       || (key && usable(view.querySelector(`${key}${control}`)))
-      || usable(view.querySelector('[data-action="finish-workout"], [data-action="reopen-workout"], [data-action="open-add-exercise"], [data-action="open-add-day"]'))));
+      || usable(view.querySelector(':is([data-action="finish-workout"], [data-action="reopen-workout"], [data-action="open-add-exercise"], [data-action="open-add-day"]):not(:disabled)'))));
     if (target) target.focus({ preventScroll: true });
   }
   if (Store.writeFailed) showStorageError();
