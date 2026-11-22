@@ -1,7 +1,7 @@
-import { Store, cleanCount, cleanPct, cleanSetValue, uid } from "../store.js";
+import { Store, cleanCount, cleanSetValue, uid } from "../store.js";
 import { WEEKDAY_LABELS, addDays, daysBetween, formatDay, formatShortDate, isoDate, jsDateToWeekdayIndex, parseLocalDate, plannedEndIso, resolveDayForDate, weekNumber } from "../schedule.js";
-import { DEFAULT_INCREMENT_PCT, blankSet, equivalentReps, exercisePR, isCompleteSet } from "../progression.js";
-import { App, cssEscape, emptyMesoState, escapeHtml, findLibraryExercise, fmtNum, getExerciseMuscleGroup, icon, pageHeader, plural, renderCurrentView, renderExerciseOptionsGrouped, renderFormError, renderMuscleGroupSelect, renderMuscleTag, renderPrBadge } from "../ui.js";
+import { PROGRESSIONS, blankSet, equivalentReps, exercisePR, isCompleteSet, progressionOf } from "../progression.js";
+import { App, PRESET_HELP, cssEscape, emptyMesoState, escapeHtml, findLibraryExercise, fmtNum, getExerciseMuscleGroup, icon, pageHeader, plural, renderCurrentView, renderExerciseOptionsGrouped, renderFormError, renderMuscleGroupSelect, renderMuscleTag, renderPrBadge, renderProgressionSelect } from "../ui.js";
 import { buildEntrySets, doMissedDay, getExerciseHistory, getTodayContext, isTouchedSet, refreshPredictions, undoMissedDay } from "../workout.js";
 import { renderLineChart } from "../chart.js";
 
@@ -464,8 +464,9 @@ export function renderAddExerciseForm() {
       <label>Sets <input type="number" inputmode="numeric" data-role="add-sets" value="2" min="1"></label>
       <label>Rep min <input type="number" inputmode="numeric" data-role="add-rep-min" value="5" min="1"></label>
       <label>Rep max <input type="number" inputmode="numeric" data-role="add-rep-max" value="10" min="1"></label>
-      <label>+ % <input type="number" inputmode="decimal" step="0.5" data-role="add-increment" value="${DEFAULT_INCREMENT_PCT}"></label>
     </div>
+    <label>Progression ${renderProgressionSelect("add-progression")}</label>
+    ${PRESET_HELP}
     <label><input type="radio" name="add-scope" value="workout" checked> This workout only</label>
     <label><input type="radio" name="add-scope" value="future"> All future workouts of this day</label>
     <div class="form-actions">
@@ -593,7 +594,7 @@ export function handleTodayAction(action, btn, view) {
       // exercise's and would be saved as the new one's history, so the sets
       // start over with the new exercise's own predictions.
       const fresh = buildEntrySets(workout, { slotId, exerciseId: exercise.id, exerciseName: exercise.name, targetSets: ex.sets.length,
-        repRangeMin: ex.repRangeMin, repRangeMax: ex.repRangeMax, weightIncrementPct: ex.weightIncrementPct, order: ex.order });
+        repRangeMin: ex.repRangeMin, repRangeMax: ex.repRangeMax, progression: progressionOf(ex), order: ex.order });
       ex.sets.forEach((s, i) => {
         Object.assign(s, blankSet(i), { baseWeight: fresh[i].baseWeight, baseReps: fresh[i].baseReps });
       });
@@ -613,7 +614,8 @@ export function handleTodayAction(action, btn, view) {
     const targetSets = cleanCount(view.querySelector('input[data-role="add-sets"]').value);
     const repRangeMin = cleanCount(view.querySelector('input[data-role="add-rep-min"]').value);
     const repRangeMax = Math.max(repRangeMin, cleanCount(view.querySelector('input[data-role="add-rep-max"]').value));
-    const weightIncrementPct = cleanPct(view.querySelector('input[data-role="add-increment"]').value);
+    const picked = view.querySelector('select[data-role="add-progression"]').value;
+    const progression = PROGRESSIONS.includes(picked) ? picked : progressionOf({});
     const scope = view.querySelector('input[name="add-scope"]:checked').value;
     const exercise = newName ? Store.addExercise(newName, newGroup) : Store.getExercises().find((x) => x.id === select.value);
     if (!exercise) {
@@ -622,15 +624,15 @@ export function handleTodayAction(action, btn, view) {
       // slot is null when the workout's day is no longer in the program
       // (see getTodayContext) — the add then stays on this workout only.
       const slot = scope === "future"
-        ? Store.addExerciseSlot(meso.id, workout.dayId, { exerciseId: exercise.id, targetSets, repRangeMin, repRangeMax, weightIncrementPct })
+        ? Store.addExerciseSlot(meso.id, workout.dayId, { exerciseId: exercise.id, targetSets, repRangeMin, repRangeMax, progression })
         : null;
       const newSlotId = slot ? slot.id : uid();
       workout.exercises.push({
         slotId: newSlotId, exerciseId: exercise.id, exerciseName: exercise.name,
-        order: workout.exercises.length, repRangeMin, repRangeMax, weightIncrementPct,
+        order: workout.exercises.length, repRangeMin, repRangeMax, progression,
         // Predicted from the exercise's history, like a substitute's sets.
         sets: buildEntrySets(workout, { slotId: newSlotId, exerciseId: exercise.id, exerciseName: exercise.name, targetSets,
-          repRangeMin, repRangeMax, weightIncrementPct, order: workout.exercises.length }),
+          repRangeMin, repRangeMax, progression, order: workout.exercises.length }),
         // Not in the template — tells reconciliation to keep it anyway.
         ...(slot ? {} : { oneOff: true }),
       });

@@ -1,7 +1,8 @@
-import { Store, cleanCount, cleanPct } from "../store.js";
+import { Store, cleanCount } from "../store.js";
 import { WEEKDAY_LABELS, formatDay, getDayWeekdayOffset, offsetWeekday, totalShiftDays } from "../schedule.js";
-import { DEFAULT_INCREMENT_PCT } from "../progression.js";
-import { App, cssEscape, emptyMesoState, escapeHtml, getExerciseMuscleGroup, icon, pageHeader, plural, renderCurrentView, renderExerciseOptionsGrouped, renderFormError, renderMuscleGroupSelect, renderMuscleTag } from "../ui.js";
+import { PROGRESSIONS, progressionOf } from "../progression.js";
+import { refreshPredictions } from "../workout.js";
+import { App, PRESET_HELP, cssEscape, emptyMesoState, escapeHtml, getExerciseMuscleGroup, icon, pageHeader, plural, renderCurrentView, renderExerciseOptionsGrouped, renderFormError, renderMinStepInput, renderMuscleGroupSelect, renderMuscleTag, renderProgressionSelect } from "../ui.js";
 
 export function renderProgram(container) {
   const meso = Store.getActiveMesocycle();
@@ -14,6 +15,7 @@ export function renderProgram(container) {
   container.innerHTML = `
     ${pageHeader(meso.name, [plural(meso.numWeeks, "week"), `starts ${formatDay(meso.startDate)}`, shifted > 0 && `shifted ${plural(shifted, "day")}`])}
     ${sortedDays.length === 0 ? `<p class="muted intro">Add the days you train. Each day holds its exercises and repeats every week.</p>` : ""}
+    ${sortedDays.some((d) => d.exercises.length > 0) ? `<details class="preset-explainer"><summary>What do the progression choices mean?</summary>${PRESET_HELP}</details>` : ""}
     ${sortedDays.map((day) => renderDayCard(meso, day)).join("")}
     <div class="add-exercise-area">
       ${App.ui.addDayOpen
@@ -96,7 +98,8 @@ export function renderSlotRow(day, slot, groupStart, isFirst, isLast) {
           <input type="number" inputmode="numeric" min="1" max="99" value="${slot.repRangeMax}" data-role="slot-rep-max" ${attrs} aria-label="Rep range maximum">
         </span>
       </label>
-      <label>+ % <input type="number" inputmode="decimal" step="0.5" min="0" max="50" value="${slot.weightIncrementPct ?? DEFAULT_INCREMENT_PCT}" data-role="slot-increment" ${attrs}></label>
+      <label class="slot-progression">Progression ${renderProgressionSelect("slot-progression", attrs, progressionOf(slot))}</label>
+      ${exercise ? `<label>Min step (lb) ${renderMinStepInput("slot-min-step", exercise.minIncrement, `${attrs} data-exercise="${exercise.id}"`)}</label>` : ""}
     </div>
   </div>`;
 }
@@ -116,8 +119,9 @@ export function renderAddSlotForm(day) {
       <label>Sets <input type="number" inputmode="numeric" data-role="new-slot-sets" ${attrs} value="2" min="1"></label>
       <label>Rep min <input type="number" inputmode="numeric" data-role="new-slot-rep-min" ${attrs} value="5" min="1"></label>
       <label>Rep max <input type="number" inputmode="numeric" data-role="new-slot-rep-max" ${attrs} value="10" min="1"></label>
-      <label>+ % <input type="number" inputmode="decimal" step="0.5" data-role="new-slot-increment" ${attrs} value="${DEFAULT_INCREMENT_PCT}"></label>
     </div>
+    <label>Progression ${renderProgressionSelect("new-slot-progression", attrs)}</label>
+    ${PRESET_HELP}
     <div class="form-actions">
       <button class="btn small primary" data-action="confirm-add-slot" ${attrs}>Add</button>
       <button class="btn small ghost" data-action="cancel-add-slot" ${attrs}>Cancel</button>
@@ -125,7 +129,7 @@ export function renderAddSlotForm(day) {
   </div>`;
 }
 
-export const SLOT_FIELD_MAP = { "slot-sets": "targetSets", "slot-rep-min": "repRangeMin", "slot-rep-max": "repRangeMax", "slot-increment": "weightIncrementPct" };
+export const SLOT_FIELD_MAP = { "slot-sets": "targetSets", "slot-rep-min": "repRangeMin", "slot-rep-max": "repRangeMax", "slot-progression": "progression" };
 
 // Only one form or confirmation is open at a time.
 function closePanels() {
@@ -153,14 +157,14 @@ export function handleProgramAction(action, btn, view) {
     const targetSets = cleanCount(field("new-slot-sets"));
     const repRangeMin = cleanCount(field("new-slot-rep-min"));
     const repRangeMax = Math.max(repRangeMin, cleanCount(field("new-slot-rep-max")));
-    const weightIncrementPct = cleanPct(field("new-slot-increment"));
+    const progression = field("new-slot-progression");
     const exercise = newName
       ? Store.addExercise(newName, field("new-slot-group"))
       : Store.getExercises().find((x) => x.id === field("new-slot-exercise"));
     if (!exercise) {
       App.ui.formError = "Choose an exercise or type a name for a new one.";
     } else {
-      Store.addExerciseSlot(meso.id, dayId, { exerciseId: exercise.id, targetSets, repRangeMin, repRangeMax, weightIncrementPct });
+      Store.addExerciseSlot(meso.id, dayId, { exerciseId: exercise.id, targetSets, repRangeMin, repRangeMax, progression });
       closePanels();
     }
   } else if (action === "move-slot-up" || action === "move-slot-down") {
@@ -193,16 +197,31 @@ export function handleProgramChange(target) {
   const meso = Store.getActiveMesocycle();
   if (!meso) return;
   const dayId = target.dataset.day, slotId = target.dataset.slot;
+  if (target.dataset.role === "slot-min-step") {
+    // The exercise's value, not the slot's: every box of it shows the same.
+    const id = target.dataset.exercise;
+    Store.updateExercise(id, { minIncrement: target.value });
+    const lib = Store.getExercises().find((e) => e.id === id);
+    const value = lib && lib.minIncrement != null ? lib.minIncrement : "";
+    document.querySelectorAll(`input[data-role="slot-min-step"][data-exercise="${cssEscape(id)}"]`).forEach((input) => { input.value = value; });
+    refreshPredictions();
+    return;
+  }
   const field = SLOT_FIELD_MAP[target.dataset.role];
   if (!field) return;
+  const day = meso.days.find((d) => d.id === dayId);
+  const slot = day && day.exercises.find((e) => e.id === slotId);
+  if (field === "progression") {
+    if (PROGRESSIONS.includes(target.value)) Store.updateExerciseSlot(meso.id, dayId, slotId, { progression: target.value });
+    else if (slot) target.value = progressionOf(slot);
+    return;
+  }
   // The inputs' min and max are only hints: an empty, zero, negative or
   // fractional value here would reach today's workout (0 sets, a broken rep
   // range).
-  const value = field === "weightIncrementPct" ? cleanPct(target.value) : cleanCount(target.value);
+  const value = cleanCount(target.value);
   target.value = value;
   const updates = { [field]: value };
-  const day = meso.days.find((d) => d.id === dayId);
-  const slot = day && day.exercises.find((e) => e.id === slotId);
   // Keep min <= max by dragging the other end along.
   const other = field === "repRangeMin" && slot && value > slot.repRangeMax ? ["repRangeMax", "slot-rep-max"]
     : field === "repRangeMax" && slot && value < slot.repRangeMin ? ["repRangeMin", "slot-rep-min"] : null;

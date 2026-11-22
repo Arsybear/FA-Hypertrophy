@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { addDays, daysBetween, isIsoDate, offsetWeekday, plannedEndIso, totalShiftDays, weekNumber, formatDay, formatShortDate, isoDate, parseLocalDate, resolveDayForDate } from "../js/schedule.js";
-import { buildPrefilledSets, equivalentReps, exercisePR, findLastLoggedSet, nextSet, pctPerRep } from "../js/progression.js";
+import { buildPrefilledSets, equivalentReps, exercisePR, findLastLoggedSet, minIncrementFor, nextSet, pctPerRep, presetFromPct, progressionOf } from "../js/progression.js";
 import { APP_VERSION } from "../js/version.js";
 
 // store.js only touches localStorage inside functions, so a Map stands in.
@@ -15,7 +15,7 @@ globalThis.localStorage = {
   setItem: (k, v) => { if (k === fullKey) throw new Error("QuotaExceededError"); memory.set(k, String(v)); },
   removeItem: (k) => memory.delete(k),
 };
-const { Store, cleanSetValue, normalizeMesocycles, validateBackup } = await import("../js/store.js");
+const { Store, cleanMinIncrement, cleanSetValue, normalizeMesocycles, validateBackup } = await import("../js/store.js");
 const { buildEntrySets, doMissedDay, findMissedDay, generateWorkout, getExerciseHistory, getTodayContext, migrateLegacyPrefill, reconcileWorkoutWithTemplate, refreshPredictions, undoMissedDay } = await import("../js/workout.js");
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -44,10 +44,36 @@ const legacy = [workout("2026-01-01", "d", [ex("a", undefined, "Row", set(90, 10
 assert.strictEqual(findLastLoggedSet(legacy, "d", "zz", "row-new-id", 0, "2026-02-01", "Row").weight, 90);
 assert.strictEqual(findLastLoggedSet(legacy, "d", "zz", "row-new-id", 0, "2026-01-01", "Row"), null);
 
-// Double progression.
-assert.deepStrictEqual({ ...nextSet(set(100, 8), 8, 12, 2.5) }, { weight: 100, reps: 9 });
-assert.deepStrictEqual({ ...nextSet(set(20, 12), 8, 12, 2.5) }, { weight: 22.5, reps: 11 });
-assert.deepStrictEqual({ ...nextSet(set(0, 12), 8, 12, 2.5) }, { weight: 0, reps: 12 });
+// Double progression with presets (spec-presets.md test lines).
+const ns = (w, r, min, max, preset, inc) => { const n = nextSet(set(w, r), min, max, preset, inc); return `${n.weight}x${n.reps}`; };
+assert.strictEqual(ns(100, 8, 8, 12, "moderate", 2.5), "100x9");
+assert.strictEqual(ns(95, 12, 8, 12, "moderate", 2.5), "97.5x11");
+assert.strictEqual(ns(95, 12, 8, 12, "light", 2.5), "97.5x11");
+assert.strictEqual(ns(95, 10, 8, 12, "aggressive", 2.5), "100x8");
+assert.strictEqual(ns(95, 10, 8, 12, "moderate", 2.5), "95x11");
+assert.strictEqual(ns(225, 8, 5, 8, "moderate", 5), "230x7");
+assert.strictEqual(ns(225, 8, 5, 8, "moderate", 2.5), "230x7");
+assert.strictEqual(ns(225, 8, 5, 8, "light", 2.5), "227.5x8");
+assert.strictEqual(ns(225, 7, 5, 8, "aggressive", 5), "235x5");
+for (const preset of ["light", "moderate", "aggressive"]) assert.strictEqual(ns(20, 12, 8, 12, preset, 5), "25x10", preset);
+assert.strictEqual(ns(20, 12, 8, 12, "moderate", 10), "30x8");
+assert.strictEqual(ns(20, 10, 8, 12, "moderate", 10), "20x11");
+assert.deepStrictEqual([15, 16, 17].map((r) => ns(10, r, 10, 15, "moderate", 10)), ["10x16", "10x17", "20x10"]); // step too big: earn it with reps
+assert.strictEqual(ns(60, 12, 8, 12, "moderate", 5), "65x10");
+assert.strictEqual(ns(235, 4, 5, 8, "moderate", 5), "235x5"); // a miss
+assert.strictEqual(ns(100, 15, 8, 12, "moderate", 2.5), "102.5x12"); // an overshoot
+assert.strictEqual(ns(17.5, 9, 6, 9, "moderate", 2.5), "20x8"); // the user's points
+assert.strictEqual(ns(15, 8, 5, 8, "moderate", 5), "20x6");
+assert.deepStrictEqual({ ...nextSet(set(0, 12), 8, 12, "moderate") }, { weight: 0, reps: 13 }); // bodyweight
+// Presets of slots and entries saved before presets (weightIncrementPct only).
+assert.deepStrictEqual([undefined, 2.5, 0, 1, 1.25, 3.75, 4, 5].map(presetFromPct), ["moderate", "moderate", "light", "light", "moderate", "moderate", "aggressive", "aggressive"]);
+assert.strictEqual(progressionOf({ progression: "constructor" }), "moderate");
+assert.strictEqual(progressionOf({ progression: "light", weightIncrementPct: 5 }), "light");
+// The minimum step comes from the library: by id, by name, else 2.5.
+const incLib = [{ id: "db", name: "Curl", minIncrement: 5 }, { id: "zero", name: "Zero", minIncrement: 0 }, { id: "neg", name: "Neg", minIncrement: -5 }, { id: "none", name: "None" }];
+assert.deepStrictEqual([minIncrementFor(incLib, "db", "x"), minIncrementFor(incLib, undefined, "Curl"), minIncrementFor(incLib, "gone", "(unknown exercise)"),
+  minIncrementFor([...incLib, { id: "u", name: "(unknown exercise)", minIncrement: 10 }], "gone", "(unknown exercise)"),
+  minIncrementFor(incLib, "none", "None"), minIncrementFor(incLib, "zero", "Zero"), minIncrementFor(incLib, "neg", "Neg")], [5, 5, 2.5, 2.5, 2.5, 2.5, 2.5]);
 
 // Schedule: local dates, gaps are rest days.
 assert.strictEqual(isoDate(parseLocalDate("2026-03-01")), "2026-03-01");
@@ -186,16 +212,13 @@ console.error = realError;
 Store.onWriteError = null;
 Store.writeFailed = false;
 
-// Rep estimate after a weight change: 1 rep per 15% light, per 2.5% heavy,
-// interpolated by weight in between.
-assert.strictEqual(pctPerRep(20), 15);
-assert.strictEqual(pctPerRep(45), 15);
-assert.strictEqual(pctPerRep(90), 8.75);
-assert.strictEqual(pctPerRep(135), 2.5);
-assert.strictEqual(pctPerRep(300), 2.5);
+// Rep estimate after a weight change: one rep per 2.5 lb, between 2.5 % and
+// 15 % per rep.
+const pct4 = (w) => Math.round(pctPerRep(w) * 10000) / 10000;
+assert.deepStrictEqual([10, 20, 45, 90, 135, 300].map(pct4), [15, 12.5, 5.5556, 2.7778, 2.5, 2.5]);
 assert.strictEqual(equivalentReps(17.5, 9, 20), 8); // the real progressions the light rate is fitted to
 assert.strictEqual(equivalentReps(15, 8, 20), 6);
-assert.strictEqual(equivalentReps(90, 10, 100), 9);
+assert.strictEqual(equivalentReps(90, 10, 100), 6);
 assert.strictEqual(equivalentReps(200, 8, 210), 6);
 assert.strictEqual(equivalentReps(200, 8, 190), 10); // lighter: more reps
 assert.strictEqual(equivalentReps(200, 2, 300), 1); // never below 1
@@ -277,11 +300,14 @@ const afterFirst = localStorage.getItem("fah_workouts");
 assert.strictEqual(at().workout.id, ctx.workout.id);
 assert.strictEqual(localStorage.getItem("fah_workouts"), afterFirst);
 
-// A slot with no weightIncrementPct (older data) gets the 2.5% default.
+// A slot from before presets gets its preset from weightIncrementPct (5 ->
+// aggressive); one with neither field is moderate. Entries carry
+// `progression`, never weightIncrementPct.
 const oldSlot = program();
 delete oldSlot[0].exercises[0].weightIncrementPct;
+oldSlot[0].exercises[1].weightIncrementPct = 5;
 seed(oldSlot);
-assert.strictEqual(at().workout.exercises[0].weightIncrementPct, 2.5);
+assert.deepStrictEqual(at().workout.exercises.map((e) => [e.progression, "weightIncrementPct" in e]), [["moderate", false], ["aggressive", false]]);
 
 // The schedule moved under an untouched unfinished workout: dropped, and the
 // date follows the new schedule.
@@ -769,6 +795,133 @@ localStorage.setItem("fah_mesocycles", JSON.stringify([{ id: "m", name: "M", num
   days: [{ id: "d", name: "D", weekdayOffset: 0, exercises: [slot("a", "bench", 2), slot("b", "row", 0), slot("c", "curl", 1), slot("e", "bench", 3)] }] }]));
 Store.removeExerciseSlot("m", "d", "b");
 assert.deepStrictEqual(Store.getMesocycles()[0].days[0].exercises.map((e) => [e.id, e.order]), [["a", 1], ["c", 0], ["e", 2]]);
+
+// --- Presets and the minimum step: storage ---
+assert.deepStrictEqual([undefined, null, "", "  ", "abc", Infinity, "5", 0, "0", -3, 0.1, 2.555, 250, 10].map(cleanMinIncrement),
+  [null, null, null, null, null, null, 5, null, null, null, 0.25, 2.56, 100, 10]);
+memory.clear();
+localStorage.setItem("fah_exercises", JSON.stringify([{ id: "bench", name: "Bench" }]));
+assert.strictEqual(Store.updateExercise("bench", { minIncrement: "5" }).minIncrement, 5);
+assert.strictEqual(Store.updateExercise("bench", { note: "x" }).minIncrement, 5); // undefined: left alone
+assert.strictEqual("minIncrement" in Store.updateExercise("bench", { minIncrement: "" }), false);
+Store.updateExercise("bench", { minIncrement: 5 });
+assert.strictEqual("minIncrement" in Store.updateExercise("bench", { minIncrement: 0 }), false); // 0: the default
+Store.updateExercise("bench", { minIncrement: 5 });
+assert.strictEqual("minIncrement" in Store.updateExercise("bench", { minIncrement: -5 }), false);
+localStorage.setItem("fah_mesocycles", JSON.stringify([{ id: "m", name: "M", numWeeks: 4, startDate: "2026-11-02", active: true,
+  days: [{ id: "d", name: "D", weekdayOffset: 0, exercises: [] }] }]));
+Store.addExerciseSlot("m", "d", { exerciseId: "bench", targetSets: 2, repRangeMin: 8, repRangeMax: 12, progression: "fast" });
+Store.addExerciseSlot("m", "d", { exerciseId: "bench", targetSets: 2, repRangeMin: 8, repRangeMax: 12, progression: "aggressive" });
+let presetSlots = Store.getMesocycles()[0].days[0].exercises;
+assert.deepStrictEqual(presetSlots.map((s) => s.progression), [undefined, "aggressive"]);
+Store.updateExerciseSlot("m", "d", presetSlots[1].id, { progression: "constructor" });
+Store.updateExerciseSlot("m", "d", presetSlots[0].id, { progression: "light" });
+assert.deepStrictEqual(Store.getMesocycles()[0].days[0].exercises.map((s) => s.progression), ["light", "aggressive"]);
+assert.deepStrictEqual(Store.cloneMesocycle("m", "2026-12-01").days[0].exercises.map((s) => s.progression), ["light", "aggressive"]);
+// Startup clean-up: a bad preset goes (slot and entry), a step is clamped or removed.
+memory.clear();
+localStorage.setItem("fah_exercises", JSON.stringify([{ id: "a", name: "A", minIncrement: 500 }, { id: "b", name: "B", minIncrement: "x" }, { id: "c", name: "C", minIncrement: 5 }, { id: "d", name: "D", minIncrement: 0 }, { id: "e", name: "E", minIncrement: -5 }]));
+localStorage.setItem("fah_mesocycles", JSON.stringify([{ id: "m", name: "M", numWeeks: 4, startDate: "2026-11-02", active: true,
+  days: [{ id: "d", name: "D", weekdayOffset: 0, exercises: [{ ...slot("s1", "a", 0), progression: "fast" }, { ...slot("s2", "c", 1), progression: "light" }] }] }]));
+localStorage.setItem("fah_workouts", JSON.stringify([{ ...workout("2026-11-02", "d", [{ ...ex("s1", "a", "A", set(10, 10)), progression: "<b>" }, { ...ex("s2", "c", "C", set(10, 10)), progression: "light" }]), id: "w" }]));
+Store.normalize();
+assert.deepStrictEqual(Store.getExercises().map((e) => "minIncrement" in e ? e.minIncrement : "none"), [100, "none", 5, "none", "none"]);
+assert.deepStrictEqual(Store.getMesocycles()[0].days[0].exercises.map((s) => s.progression), [undefined, "light"]);
+assert.deepStrictEqual(Store.getWorkouts()[0].exercises.map((e) => e.progression), [undefined, "light"]);
+// Backup: a preset is absent or one of the three; a step is a number.
+assert.ok(badFeature((b) => { b.mesocycles[0].days[0].exercises[0].progression = "fast"; }));
+assert.ok(badFeature((b) => { b.workouts[0].exercises[0].progression = "fast"; }));
+assert.ok(badFeature((b) => { b.exercises[0].minIncrement = "5"; }));
+for (const preset of ["light", "moderate", "aggressive"]) {
+  assert.strictEqual(badFeature((b) => { b.mesocycles[0].days[0].exercises[0].progression = preset; b.workouts[0].exercises[0].progression = preset; }), null, preset);
+}
+assert.strictEqual(badFeature((b) => { b.exercises[0].minIncrement = 5; }), null);
+// Import runs the same clean-up as startup: a step is clamped.
+const stepBackup = JSON.parse(JSON.stringify(featureBackup));
+stepBackup.exercises[0].minIncrement = 500;
+assert.strictEqual(Store.importBackup(stepBackup), true);
+assert.strictEqual(Store.getExercises()[0].minIncrement, 100);
+for (const step of [0, -5]) { // 0 or less: no value (the 2.5 default)
+  stepBackup.exercises[0].minIncrement = step;
+  assert.strictEqual(Store.importBackup(JSON.parse(JSON.stringify(stepBackup))), true);
+  assert.strictEqual("minIncrement" in Store.getExercises()[0], false, String(step));
+}
+assert.strictEqual(badFeature((b) => { for (const s of b.mesocycles[0].days[0].exercises) { delete s.progression; s.weightIncrementPct = 5; } }), null); // weightIncrementPct only
+
+// --- Presets and the minimum step: predictions ---
+// A step change reaches an untouched prediction through refreshPredictions.
+memory.clear();
+localStorage.setItem("fah_exercises", JSON.stringify([{ id: "bench", name: "Bench" }]));
+localStorage.setItem("fah_workouts", JSON.stringify([
+  { ...fixedWorkout("2026-11-04", "wed", { finished: true }), exercises: [wex("s1", "bench", "Bench", 0, [logged(0, 100, 12)])] },
+  fixedWorkout("2026-11-11", "wed"),
+]));
+const benchBase = () => { const s = Store.getWorkout("w-2026-11-11").exercises[0].sets[0]; return `${s.baseWeight}x${s.baseReps}`; };
+refreshPredictions();
+assert.strictEqual(benchBase(), "102.5x11");
+Store.updateExercise("bench", { minIncrement: 10 });
+refreshPredictions();
+assert.strictEqual(benchBase(), "110x8");
+// A preset changed on Program reaches today's entry: an untouched one is
+// predicted again, a touched one keeps its sets.
+memory.clear();
+localStorage.setItem("fah_exercises", JSON.stringify([{ id: "bench", name: "Bench" }, { id: "row", name: "Row" }]));
+localStorage.setItem("fah_workouts", JSON.stringify([
+  { ...workout("2026-11-04", "A", [ex("s1", "bench", "Bench", set(95, 10)), ex("s2", "row", "Row", set(80, 10))]), id: "h" },
+  unfinished("r", "2026-11-11", "A", [
+    wex("s1", "bench", "Bench", 0, [{ ...blank(0), baseWeight: 95, baseReps: 11 }]),
+    wex("s2", "row", "Row", 1, [{ ...logged(0, 80, 11), baseWeight: 80, baseReps: 11 }]),
+  ]),
+]));
+reconcileWorkoutWithTemplate(Store.getWorkout("r"), { id: "A", name: "x", exercises: [{ ...slot("s1", "bench", 0, 1), progression: "aggressive" }, { ...slot("s2", "row", 1, 1), progression: "aggressive" }] });
+assert.deepStrictEqual(Store.getWorkout("r").exercises.map((e) => [e.progression, e.sets[0].baseWeight, e.sets[0].baseReps, e.sets[0].weight]),
+  [["aggressive", 100, 8, null], ["aggressive", 80, 11, 80]]);
+
+// --- Missed day on consecutive training days (the user's case): train Mon
+// to Fri, miss Monday, do it Tuesday and shift the rest of the week along ---
+memory.clear();
+const consecutive = () => {
+  const bench = Store.addExercise("Bench", "Chest");
+  const meso = Store.createMesocycle({ name: "M", numWeeks: 6, startDate: "2026-11-16" }); // a Monday
+  Store.setActiveMesocycle(meso.id);
+  ["Mon-A", "Tue-B", "Wed-C", "Thu-D", "Fri-E"].forEach((name, i) => {
+    Store.addDay(meso.id, name, i);
+    const day = activeMeso().days.find((d) => d.name === name);
+    Store.addExerciseSlot(meso.id, day.id, { exerciseId: bench.id, targetSets: 2, repRangeMin: 8, repRangeMax: 12 });
+  });
+  return activeMeso();
+};
+const weekFrom = (from, n) => Array.from({ length: n }, (_, i) => {
+  const t = resolveDayForDate(activeMeso(), addDays(parseLocalDate(from), i));
+  return t ? t.name : "rest";
+});
+let cmeso = consecutive();
+generateWorkout(cmeso, resolveDayForDate(cmeso, parseLocalDate("2026-11-17")), "2026-11-17"); // Tuesday's own, untouched
+assert.deepStrictEqual(missedOn(cmeso, Store.getWorkouts(), "2026-11-17", "2026-11-17"), ["2026-11-16", cmeso.days[0].id]);
+assert.strictEqual(doMissedDay(cmeso, "2026-11-17", "2026-11-17", false), null); // no shift on a training day: refused
+assert.strictEqual(activeMeso().shifts, undefined);
+assert.strictEqual(doMissedDay(cmeso, "2026-11-17", "2026-11-17", true).dayName, "Mon-A");
+const oneShift = ["rest", "Mon-A", "Tue-B", "Wed-C", "Thu-D", "Fri-E", "rest", "rest", "Mon-A", "Tue-B", "Wed-C", "Thu-D"];
+assert.deepStrictEqual(weekFrom("2026-11-16", 12), oneShift);
+assert.deepStrictEqual(Store.getWorkouts().filter((w) => w.date === "2026-11-17").map((w) => w.dayName), ["Mon-A"]);
+// Then Tuesday logged and finished, Wednesday missed too, opened Thursday.
+const tue = Store.findWorkoutByDate(activeMeso().id, "2026-11-17");
+tue.exercises[0].sets[0] = { ...tue.exercises[0].sets[0], ...logged(0, 100, 10) };
+Store.updateWorkout(tue.id, { exercises: tue.exercises });
+Store.finishWorkout(tue.id);
+cmeso = activeMeso();
+generateWorkout(cmeso, resolveDayForDate(cmeso, parseLocalDate("2026-11-19")), "2026-11-19");
+assert.deepStrictEqual(missedOn(cmeso, Store.getWorkouts(), "2026-11-19", "2026-11-19"), ["2026-11-18", cmeso.days[1].id]);
+assert.strictEqual(doMissedDay(cmeso, "2026-11-19", "2026-11-19", true).dayName, "Tue-B");
+assert.deepStrictEqual(weekFrom("2026-11-16", 12), ["rest", "Mon-A", "rest", "Tue-B", "Wed-C", "Thu-D", "Fri-E", "rest", "rest", "Mon-A", "Tue-B", "Wed-C"]);
+assert.strictEqual(undoMissedDay(activeMeso(), "2026-11-19"), true);
+assert.deepStrictEqual(weekFrom("2026-11-16", 12), oneShift);
+// Monday and Tuesday both missed, opened Wednesday: resumes from Monday's.
+memory.clear();
+cmeso = consecutive();
+assert.deepStrictEqual(missedOn(cmeso, [], "2026-11-18", "2026-11-18"), ["2026-11-16", cmeso.days[0].id]);
+assert.strictEqual(doMissedDay(cmeso, "2026-11-18", "2026-11-18", true).dayName, "Mon-A");
+assert.deepStrictEqual(weekFrom("2026-11-16", 10), ["rest", "rest", "Mon-A", "Tue-B", "Wed-C", "Thu-D", "Fri-E", "rest", "rest", "Mon-A"]);
 
 // The version shown in Settings is the service worker cache version.
 assert.ok(fs.readFileSync(path.join(root, "sw.js"), "utf8").includes(`"fa-hypertrophy-v${APP_VERSION}"`), "APP_VERSION and CACHE_NAME differ");

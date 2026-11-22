@@ -1,6 +1,6 @@
 import { Store } from "./store.js";
 import { addDays, daysBetween, isIsoDate, isoDate, parseLocalDate, resolveDayForDate, schedulePosition } from "./schedule.js";
-import { DEFAULT_INCREMENT_PCT, UNKNOWN_EXERCISE, buildPrefilledSets, exerciseMatchers, matchingEntries } from "./progression.js";
+import { UNKNOWN_EXERCISE, buildPrefilledSets, exerciseMatchers, matchingEntries, progressionOf } from "./progression.js";
 
 // How many of the slots or workout entries in `list` hold the same exercise
 // as `item` and sit before it in order: the "occurrence" of
@@ -12,7 +12,8 @@ function occurrenceIn(list, item) {
 
 // The sets, with predictions, for one entry of `workout`: entry is
 // { slotId, exerciseId, exerciseName, targetSets, repRangeMin, repRangeMax,
-// weightIncrementPct, order } (order: where it sits or will sit). Predicted
+// progression, order } (order: where it sits or will sit; progression falls
+// back to an older entry's weightIncrementPct, see progressionOf). Predicted
 // as of the workout's date, from the same day, then a day of the same name,
 // then any day; the k-th entry of an exercise follows the k-th of history.
 // Every caller that builds an entry's sets outside generateWorkout uses this,
@@ -20,7 +21,7 @@ function occurrenceIn(list, item) {
 export function buildEntrySets(workout, entry, history = Store.getWorkouts()) {
   return buildPrefilledSets({
     id: entry.slotId, exerciseId: entry.exerciseId, targetSets: entry.targetSets,
-    repRangeMin: entry.repRangeMin, repRangeMax: entry.repRangeMax, weightIncrementPct: entry.weightIncrementPct,
+    repRangeMin: entry.repRangeMin, repRangeMax: entry.repRangeMax, progression: progressionOf(entry),
   }, history, workout.dayId, workout.date, entry.exerciseName, workout.dayName, occurrenceIn(workout.exercises, entry));
 }
 
@@ -34,7 +35,7 @@ function entryFromSlot(slot, dayTemplate, daySlots, dateIso, order, library, wor
     order,
     repRangeMin: slot.repRangeMin,
     repRangeMax: slot.repRangeMax,
-    weightIncrementPct: slot.weightIncrementPct ?? DEFAULT_INCREMENT_PCT,
+    progression: progressionOf(slot),
     sets: buildPrefilledSets(slot, workouts, dayTemplate.id, dateIso, exercise && exercise.name, dayTemplate.name, occurrenceIn(daySlots, slot)),
   };
 }
@@ -68,7 +69,9 @@ export function generateWorkout(meso, dayTemplate, dateIso) {
 // already touched: then it stays, as this workout's own (oneOff). An
 // untouched entry whose exercise differs from its slot's (the slot was
 // swapped for all future elsewhere) is rebuilt to the slot's exercise,
-// unless it was swapped for this workout only (`swapped: true`).
+// unless it was swapped for this workout only (`swapped: true`). A rep range
+// or preset edited on Program reaches the entry; an untouched entry's sets
+// are then predicted again, a touched one keeps its sets.
 export function reconcileWorkoutWithTemplate(workout, dayTemplate) {
   const templateSlots = [...dayTemplate.exercises].sort((a, b) => a.order - b.order);
   const templateIds = new Set(templateSlots.map((s) => s.id));
@@ -88,7 +91,7 @@ export function reconcileWorkoutWithTemplate(workout, dayTemplate) {
   templateSlots.forEach((slot, idx) => {
     if (skipped.has(slot.id)) return;
     const existing = workout.exercises.find((ex) => ex.slotId === slot.id);
-    const pct = slot.weightIncrementPct ?? DEFAULT_INCREMENT_PCT;
+    const progression = progressionOf(slot);
     if (!existing) {
       workout.exercises.push(entryFromSlot(slot, dayTemplate, templateSlots, workout.date, workout.exercises.length + idx, library, history));
       changed = true;
@@ -100,8 +103,9 @@ export function reconcileWorkoutWithTemplate(workout, dayTemplate) {
       return;
     }
     if (existing.repRangeMin !== slot.repRangeMin ||
-        existing.repRangeMax !== slot.repRangeMax || existing.weightIncrementPct !== pct) {
-      Object.assign(existing, { repRangeMin: slot.repRangeMin, repRangeMax: slot.repRangeMax, weightIncrementPct: pct });
+        existing.repRangeMax !== slot.repRangeMax || progressionOf(existing) !== progression) {
+      Object.assign(existing, { repRangeMin: slot.repRangeMin, repRangeMax: slot.repRangeMax, progression });
+      if (!existing.sets.some(isTouchedSet)) existing.sets = buildEntrySets(workout, { ...existing, targetSets: slot.targetSets }, history);
       changed = true;
     }
     if (existing.sets.length < slot.targetSets) {

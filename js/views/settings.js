@@ -1,7 +1,7 @@
 import { APP_VERSION } from "../version.js";
 import { Store, cleanCount, validateBackup } from "../store.js";
 import { WEEKDAY_LABELS, formatDay, isIsoDate, isoDate, jsDateToWeekdayIndex, mesocycleStartWeekday, parseLocalDate } from "../schedule.js";
-import { App, escapeHtml, icon, metaLine, pageHeader, plural, renderCurrentView, renderFormError, renderMuscleGroupSelect, renderMuscleTag } from "../ui.js";
+import { App, escapeHtml, icon, metaLine, pageHeader, plural, renderCurrentView, renderFormError, renderMinStepInput, renderMuscleGroupSelect, renderMuscleTag } from "../ui.js";
 import { refreshPredictions } from "../workout.js";
 
 // One line under a mesocycle's name in the list (HTML, see metaLine).
@@ -111,7 +111,7 @@ export function renderSettings(container) {
 function renderExerciseEditForm(ex) {
   const attrs = `data-id="${ex.id}"`;
   // After a refused save the form shows what was typed, not the stored values.
-  const v = App.ui.exerciseDraft || { name: ex.name, muscleGroup: ex.muscleGroup || "Other", note: ex.note || "" };
+  const v = App.ui.exerciseDraft || { name: ex.name, muscleGroup: ex.muscleGroup || "Other", note: ex.note || "", minIncrement: ex.minIncrement ?? "" };
   return `<div class="list-row editing">
     <div class="inline-form">
       <p class="form-title">Edit exercise</p>
@@ -119,6 +119,8 @@ function renderExerciseEditForm(ex) {
       <label>Name <input type="text" data-role="exlib-name" value="${escapeHtml(v.name)}"></label>
       <label>Muscle group ${renderMuscleGroupSelect("exlib-group", "", null, v.muscleGroup)}</label>
       <label>Note <input type="text" data-role="exlib-note" maxlength="200" value="${escapeHtml(v.note)}" placeholder="Optional"></label>
+      <label>Min step (lb) ${renderMinStepInput("exlib-min-step", v.minIncrement)}</label>
+      <p class="muted hint">Smallest weight jump your equipment allows: 5 for dumbbells that go 20, 25, 30; 10 for most machines. Used for this exercise everywhere.</p>
       <div class="form-actions">
         <button class="btn small primary" data-action="save-exercise" ${attrs}>Save</button>
         <button class="btn small ghost" data-action="cancel-edit-exercise" ${attrs}>Cancel</button>
@@ -203,8 +205,11 @@ export function handleSettingsAction(action, btn, view) {
     Object.assign(App.ui, { editExerciseOpen: null, exerciseDraft: null, formError: null });
   } else if (action === "save-exercise") {
     const value = (role) => view.querySelector(`[data-role="${role}"]`).value;
-    const draft = { name: value("exlib-name"), muscleGroup: value("exlib-group"), note: value("exlib-note") };
-    if (Store.updateExercise(btn.dataset.id, draft)) Object.assign(App.ui, { editExerciseOpen: null, exerciseDraft: null, formError: null });
+    const draft = { name: value("exlib-name"), muscleGroup: value("exlib-group"), note: value("exlib-note"), minIncrement: value("exlib-min-step") };
+    if (Store.updateExercise(btn.dataset.id, draft)) {
+      Object.assign(App.ui, { editExerciseOpen: null, exerciseDraft: null, formError: null });
+      refreshPredictions(); // a new min step changes every untouched prediction of it
+    }
     else Object.assign(App.ui, { exerciseDraft: draft, formError: draft.name.trim() ? "Another exercise already has that name." : "Give it a name." });
   } else if (action === "open-remove-exercise") {
     Object.assign(App.ui, { removeExerciseOpen: btn.dataset.id, editExerciseOpen: null, exerciseDraft: null, formError: null });

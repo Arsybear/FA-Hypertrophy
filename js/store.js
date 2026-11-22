@@ -1,4 +1,5 @@
 import { addDays, isIsoDate, isoDate, parseLocalDate, totalShiftDays } from "./schedule.js";
+import { PROGRESSIONS } from "./progression.js";
 
 // localStorage-backed data access for FA-Hypertrophy.
 // Keys: fah_exercises, fah_mesocycles, fah_workouts
@@ -55,6 +56,45 @@ export function cleanPct(v) {
   return Math.min(50, Math.max(0, Number(v) || 0));
 }
 
+// An exercise's minimum weight step in lb, as typed: blank, not a number,
+// or 0 or less is null (no value: the 2.5 default), else 0.25 to 100, to 0.01.
+export function cleanMinIncrement(raw) {
+  if (raw == null || (typeof raw === "string" && raw.trim() === "")) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.round(Math.min(100, Math.max(0.25, n)) * 100) / 100;
+}
+
+// A slot's or entry's preset: removed unless it is one of PROGRESSIONS (it
+// is rendered into an attribute). Returns whether it changed.
+function cleanProgression(obj) {
+  if (!("progression" in obj) || PROGRESSIONS.includes(obj.progression)) return false;
+  delete obj.progression;
+  return true;
+}
+
+// Library minimum steps: clamped, or removed when not a number. Returns
+// whether anything changed.
+function cleanLibrary(exercises) {
+  let changed = false;
+  for (const e of exercises) {
+    if (!("minIncrement" in e)) continue;
+    const v = typeof e.minIncrement === "number" ? cleanMinIncrement(e.minIncrement) : null;
+    if (v == null) delete e.minIncrement;
+    else if (v !== e.minIncrement) e.minIncrement = v;
+    else continue;
+    changed = true;
+  }
+  return changed;
+}
+
+// Workout entries' presets, as cleanProgression. Returns whether anything changed.
+function cleanEntries(workouts) {
+  let changed = false;
+  for (const w of workouts) for (const entry of w.exercises || []) if (cleanProgression(entry)) changed = true;
+  return changed;
+}
+
 // A set value as typed on Today: weight 0 (bodyweight) to 2000 lb, reps a
 // whole number 0 to 999. Anything else (text, negative, 7.5 reps, 1e20) is
 // refused as blank: it would be saved as history and drive the predictions.
@@ -104,10 +144,18 @@ export function normalizeMesocycles(list) {
         set(slot, "repRangeMin", cleanCount(slot.repRangeMin));
         set(slot, "repRangeMax", Math.max(slot.repRangeMin, cleanCount(slot.repRangeMax)));
         if (slot.weightIncrementPct != null) set(slot, "weightIncrementPct", cleanPct(slot.weightIncrementPct));
+        if (cleanProgression(slot)) changed = true;
       }
     }
   }
   return changed;
+}
+
+// A slot or its updates with `progression` left out unless it is a preset.
+function withoutBadProgression(obj) {
+  if (!("progression" in obj) || PROGRESSIONS.includes(obj.progression)) return obj;
+  const { progression, ...rest } = obj;
+  return rest;
 }
 
 export const Store = {
@@ -119,6 +167,10 @@ export const Store = {
   normalize() {
     const list = Store.getMesocycles();
     if (normalizeMesocycles(list)) Store.saveMesocycles(list);
+    const exercises = Store.getExercises();
+    if (cleanLibrary(exercises)) writeJSON(KEYS.exercises, exercises);
+    const workouts = Store.getWorkouts();
+    if (cleanEntries(workouts)) Store.saveWorkouts(workouts);
   },
 
   // --- Exercise library ---
@@ -140,7 +192,7 @@ export const Store = {
   // without one), so history keeps showing one name. A name that workout
   // entries of another exerciseId carry (a deleted exercise's history) is
   // refused too: those entries would merge into this exercise by name.
-  updateExercise(id, { name, muscleGroup, note } = {}) {
+  updateExercise(id, { name, muscleGroup, note, minIncrement } = {}) {
     const exercises = Store.getExercises();
     const ex = exercises.find((e) => e.id === id);
     if (!ex) return null;
@@ -157,6 +209,11 @@ export const Store = {
       ex.name = clean;
     }
     if (muscleGroup !== undefined) ex.muscleGroup = muscleGroup || "Other";
+    if (minIncrement !== undefined) {
+      const clean = cleanMinIncrement(minIncrement);
+      if (clean == null) delete ex.minIncrement;
+      else ex.minIncrement = clean;
+    }
     if (note !== undefined) {
       // At most 200, the limit validateBackup holds a backup to.
       const clean = String(note ?? "").trim().slice(0, 200);
@@ -298,7 +355,7 @@ export const Store = {
     const newSlot = {
       id: uid(),
       order: day.exercises.length,
-      ...slot,
+      ...withoutBadProgression(slot),
     };
     day.exercises.push(newSlot);
     Store.saveMesocycles(list);
@@ -320,7 +377,7 @@ export const Store = {
     const day = meso && meso.days.find((d) => d.id === dayId);
     const slot = day && day.exercises.find((e) => e.id === slotId);
     if (!slot) return null;
-    Object.assign(slot, updates);
+    Object.assign(slot, withoutBadProgression(updates));
     Store.saveMesocycles(list);
     return slot;
   },
@@ -405,7 +462,10 @@ export const Store = {
   importBackup(data) {
     const before = Store.exportBackup();
     try { localStorage.setItem("fah_before_import", JSON.stringify(before)); } catch (e) { /* no room for the copy */ }
+    // The same clean-up as Store.normalize, on the file before anything is written.
     normalizeMesocycles(data.mesocycles);
+    cleanLibrary(data.exercises);
+    cleanEntries(data.workouts);
     const keys = ["exercises", "mesocycles", "workouts"];
     try {
       for (const k of keys) localStorage.setItem(KEYS[k], JSON.stringify(data[k]));
@@ -452,19 +512,21 @@ export function validateBackup(data) {
   const shiftsOk = (list, start) => list == null || (Array.isArray(list) && list.every((sh, i) =>
     isObj(sh) && date(sh.date) && sh.date >= start && Number.isInteger(sh.days) && sh.days >= 1 && sh.days <= 366
     && (i === 0 || isoDate(addDays(parseLocalDate(list[i - 1].date), list[i - 1].days)) <= sh.date)));
-  const exercisesOk = all(data.exercises, (e) => id(e.id) && str(e.name) && (e.muscleGroup == null || str(e.muscleGroup))
+  // A preset is rendered into an attribute: absent or exactly one of them.
+  const optProgression = (v) => v === undefined || PROGRESSIONS.includes(v);
+  const exercisesOk = all(data.exercises, (e) => id(e.id) && str(e.name) && (e.muscleGroup == null || str(e.muscleGroup)) && optNum(e.minIncrement)
     && (e.note == null || (str(e.note) && e.note.length <= 200)));
   const mesocyclesOk = all(data.mesocycles, (m) =>
     id(m.id) && str(m.name) && num(m.numWeeks) && date(m.startDate) && typeof m.active === "boolean" && shiftsOk(m.shifts, m.startDate)
     && all(m.days, (d) => id(d.id) && str(d.name) && optOffset(d.weekdayOffset) && optNum(d.order)
       && all(d.exercises, (slot) => id(slot.id) && id(slot.exerciseId) && num(slot.order) && num(slot.targetSets)
-        && num(slot.repRangeMin) && num(slot.repRangeMax) && optNum(slot.weightIncrementPct))));
+        && num(slot.repRangeMin) && num(slot.repRangeMax) && optNum(slot.weightIncrementPct) && optProgression(slot.progression))));
   const workoutsOk = all(data.workouts, (w) =>
     id(w.id) && id(w.mesocycleId) && id(w.dayId) && date(w.date) && str(w.dayName) && typeof w.finished === "boolean"
     && (w.finishedAt == null || str(w.finishedAt)) && optBool(w.makeup) && (w.makeupFor == null || date(w.makeupFor))
     && (w.skippedSlotIds == null || (Array.isArray(w.skippedSlotIds) && w.skippedSlotIds.every(id)))
     && all(w.exercises, (ex) => id(ex.slotId) && (ex.exerciseId == null || id(ex.exerciseId)) && str(ex.exerciseName)
-      && num(ex.order) && num(ex.repRangeMin) && num(ex.repRangeMax) && optNum(ex.weightIncrementPct) && optBool(ex.oneOff) && optBool(ex.swapped)
+      && num(ex.order) && num(ex.repRangeMin) && num(ex.repRangeMax) && optNum(ex.weightIncrementPct) && optBool(ex.oneOff) && optBool(ex.swapped) && optProgression(ex.progression)
       && all(ex.sets, (set) => optNum(set.weight) && optNum(set.reps) && optNum(set.baseWeight) && optNum(set.baseReps)
         && optNum(set.setIndex) && optBool(set.isLogged) && optBool(set.done) && optBool(set.prefilled) && optBool(set.repsManual))));
   if (!exercisesOk || !mesocyclesOk || !workoutsOk) return "This backup file is damaged or was edited. Nothing was imported.";

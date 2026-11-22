@@ -1,85 +1,94 @@
 import { Store } from "./store.js";
 
-export const DEFAULT_INCREMENT_PCT = 2.5;
-export const PLATE_INCREMENT = 2.5;
-export const LIGHT_WEIGHT_THRESHOLD = 45; // below this: light (rep-first)
-export const HEAVY_WEIGHT_THRESHOLD = 135; // at/above this: heavy (weight-first)
+// Progression presets (coach's research, report.md section 4). A preset
+// says when the weight goes up (trigger: the top of the rep range, or its
+// middle) and by about how much (stepPct of the weight). The step is always
+// a whole number of the exercise's minimum increment (its equipment: 5 lb
+// dumbbells, 10 lb machine stacks), stored on the library exercise.
+export const REP_COST_LB = 2.5; // one rep per 2.5 lb: the user's points (17.5x9 -> 20x8, 15x8 -> 20x6)
+export const MAX_PCT_PER_REP = 15; // cap for very light weights
+export const MIN_PCT_PER_REP = 2.5; // floor, reached at 100 lb
+export const DEFAULT_MIN_INCREMENT = 2.5;
+export const DEFAULT_PROGRESSION = "moderate";
+export const PRESETS = {
+  light: { stepPct: 0, trigger: "top" },
+  moderate: { stepPct: 2.5, trigger: "top" },
+  aggressive: { stepPct: 5, trigger: "mid" },
+};
+export const PROGRESSIONS = Object.keys(PRESETS);
 
-export function roundToPlate(n) {
-  return Math.round(n / PLATE_INCREMENT) * PLATE_INCREMENT;
-}
-
-export function weightClass(weight) {
-  if (weight < LIGHT_WEIGHT_THRESHOLD) return "light";
-  if (weight >= HEAVY_WEIGHT_THRESHOLD) return "heavy";
-  return "medium";
-}
-
-// Heavy exercises bump weight once reps clear the rep range's midpoint
-// instead of forcing a full climb to repRangeMax first — one more rep at
-// a heavy weight is disproportionately harder than at a light one, so a
-// smaller, more frequent weight bump is the smoother progression. Light
-// and medium exercises keep the classic full-climb trigger.
-export function weightBumpTriggerReps(cls, repRangeMin, repRangeMax) {
-  if (cls === "heavy") {
-    return repRangeMin + Math.ceil((repRangeMax - repRangeMin) / 2);
-  }
-  return repRangeMax;
-}
-
-// How many percent of load increase costs one rep. Light exercises move in
-// big equipment-forced jumps (15 -> 20lb dumbbells) that cost far fewer reps
-// than the same percentage on a heavy lift — fitted to real progressions
-// (17.5x9 -> 20x8, 15x8 -> 20x6: ~1 rep per 15%). Heavy matches what the old
-// Epley/Brzycki estimate gave at typical hypertrophy rep counts (~1 rep per
-// 2.5%). Medium interpolates linearly by weight so exercises either side of
-// a threshold don't behave wildly differently — that band is a guess, not
-// yet fitted to data.
-export const LIGHT_PCT_PER_REP = 15;
-export const HEAVY_PCT_PER_REP = 2.5;
-
+// How many percent of load change costs one rep, from the weight the
+// estimate starts at: one rep per 2.5 lb, between 2.5 % and 15 % per rep.
 export function pctPerRep(weight) {
-  if (weight <= LIGHT_WEIGHT_THRESHOLD) return LIGHT_PCT_PER_REP;
-  if (weight >= HEAVY_WEIGHT_THRESHOLD) return HEAVY_PCT_PER_REP;
-  const t = (weight - LIGHT_WEIGHT_THRESHOLD) / (HEAVY_WEIGHT_THRESHOLD - LIGHT_WEIGHT_THRESHOLD);
-  return LIGHT_PCT_PER_REP + t * (HEAVY_PCT_PER_REP - LIGHT_PCT_PER_REP);
+  return Math.min(MAX_PCT_PER_REP, Math.max(MIN_PCT_PER_REP, (REP_COST_LB / weight) * 100));
 }
 
 // Estimate the rep target at newWeight relative to the (baseWeight,
 // baseReps) anchor: one rep lost (or gained, for a lighter weight) per
 // pctPerRep(baseWeight)% of load change. Callers clamp to the rep range.
+// Not a 1RM formula (Epley/Brzycki): one curve for every exercise turned
+// 15x9 -> 20lb into 20x1.
 export function equivalentReps(baseWeight, baseReps, newWeight) {
   if (baseWeight == null || baseReps == null || newWeight == null || newWeight <= 0 || baseWeight <= 0) return null;
   const pctChange = (newWeight / baseWeight - 1) * 100;
   return Math.max(1, Math.round(baseReps - pctChange / pctPerRep(baseWeight)));
 }
 
-// Double-progression prefill: given the previous logged set and an
-// exercise's rep range / weight increment (% of current weight), compute
-// the next suggested set. The trigger rep count for the weight bump
-// depends on the previous set's weight class (see weightBumpTriggerReps);
-// the bump itself is always forced to change the weight by at least one
-// plate increment, since a small percentage of a light weight can round
-// back to the same number and silently stall progression. weightIncrementPct
-// is defined as the week-over-week weight increase at a constant rep count,
-// so once the weight is bumped, the new rep target is derived via
-// equivalentReps (not reset to repRangeMin) — otherwise the "same reps"
-// premise behind the percentage is broken and the new prescription reads as
-// an accidental deload (e.g. 95x12 -> 97.5x8 is a much easier set than
-// 95x12, when 97.5x12 is the real next step).
-export function nextSet(prevSet, repRangeMin, repRangeMax, weightIncrementPct) {
+// Slots and entries saved before presets have only weightIncrementPct: the
+// nearest preset's stepPct (0 / 2.5 / 5), a tie going to moderate.
+export function presetFromPct(pct) {
+  if (typeof pct !== "number" || !Number.isFinite(pct)) return DEFAULT_PROGRESSION;
+  if (pct < 1.25) return "light";
+  if (pct <= 3.75) return "moderate";
+  return "aggressive";
+}
+
+// A slot's or entry's preset. Checked with includes, never PRESETS[x]: a
+// value like "constructor" would find an inherited property.
+export function progressionOf(slotOrEntry) {
+  return PROGRESSIONS.includes(slotOrEntry.progression) ? slotOrEntry.progression : presetFromPct(slotOrEntry.weightIncrementPct);
+}
+
+// The exercise's minimum weight step from the library: by id, then by name
+// (entries with a missing or stale id; never the shared unknown name), else
+// the default. Read when a prediction is built, never copied.
+export function minIncrementFor(library, exerciseId, exerciseName) {
+  const ex = (exerciseId != null && library.find((e) => e.id === exerciseId))
+    || (exerciseName != null && exerciseName !== UNKNOWN_EXERCISE && library.find((e) => e.name === exerciseName));
+  const v = ex && ex.minIncrement;
+  return typeof v === "number" && v > 0 ? v : DEFAULT_MIN_INCREMENT;
+}
+
+// The rep count at which the weight goes up: the top of the range, or (mid)
+// its middle, rounded up (8-12 -> 10, 5-8 -> 7).
+export function triggerReps(progression, repRangeMin, repRangeMax) {
+  return PRESETS[progression].trigger === "mid" ? repRangeMin + Math.ceil((repRangeMax - repRangeMin) / 2) : repRangeMax;
+}
+
+// The weight after one jump: the preset's % of the weight, rounded to the
+// NEAREST whole number of minIncrements (a half up), at least one. 1e-9
+// keeps an exact half from falling below through float error. The step is a
+// multiple of minIncrement; the new weight need not be.
+export function jumpedWeight(weight, progression, minIncrement) {
+  const steps = Math.max(1, Math.floor((weight * PRESETS[progression].stepPct) / 100 / minIncrement + 0.5 + 1e-9));
+  return Math.round((weight + steps * minIncrement) * 1000) / 1000;
+}
+
+// Double progression: the next set from the previous logged one. Below the
+// trigger, one more rep (up to the range top). At it, the weight jumps and
+// the reps follow equivalentReps (not reset to repRangeMin: 95x12 -> 97.5x8
+// would read as a deload). When the equipment's step is too big to land in
+// the range yet, one more rep instead, even past the range top.
+export function nextSet(prevSet, repRangeMin, repRangeMax, progression, minIncrement = DEFAULT_MIN_INCREMENT) {
   if (!prevSet || prevSet.reps == null || prevSet.weight == null) return null;
-  const cls = weightClass(prevSet.weight);
-  const triggerReps = weightBumpTriggerReps(cls, repRangeMin, repRangeMax);
-  // A 0lb set is bodyweight: there is no weight to bump, only reps.
-  if (prevSet.weight > 0 && prevSet.reps >= triggerReps) {
-    const bumped = roundToPlate(prevSet.weight * (1 + weightIncrementPct / 100));
-    const weight = bumped > prevSet.weight ? bumped : prevSet.weight + PLATE_INCREMENT;
-    const equivReps = equivalentReps(prevSet.weight, prevSet.reps, weight);
-    const reps = equivReps == null ? repRangeMin : Math.min(Math.max(equivReps, repRangeMin), repRangeMax);
-    return { weight, reps };
-  }
-  return { weight: prevSet.weight, reps: Math.min(prevSet.reps + 1, repRangeMax) };
+  const { weight, reps } = prevSet;
+  // Bodyweight (0 lb): nothing to add but reps, so no cap at the range top.
+  if (weight <= 0) return { weight, reps: reps + 1 };
+  if (reps < triggerReps(progression, repRangeMin, repRangeMax)) return { weight, reps: Math.min(reps + 1, repRangeMax) };
+  const newWeight = jumpedWeight(weight, progression, minIncrement);
+  const estimate = equivalentReps(weight, reps, newWeight);
+  if (estimate < repRangeMin) return { weight, reps: reps + 1 };
+  return { weight: newWeight, reps: Math.min(estimate, repRangeMax) };
 }
 
 export function isCompleteSet(s) {
@@ -185,11 +194,13 @@ export function blankSet(setIndex) {
 // lives in baseWeight/baseReps and is shown as the inputs' placeholder.
 // dayName and occurrence: see findLastLoggedSet (optional).
 export function buildPrefilledSets(slot, workouts, dayId, beforeIsoDate, exerciseName, dayName = null, occurrence = 0) {
+  const progression = progressionOf(slot);
+  const inc = minIncrementFor(Store.getExercises(), slot.exerciseId, exerciseName);
   const sets = [];
   for (let i = 0; i < slot.targetSets; i++) {
     const set = blankSet(i);
     const prevSet = findLastLoggedSet(workouts, dayId, slot.id, slot.exerciseId, i, beforeIsoDate, exerciseName, dayName, occurrence);
-    const suggestion = prevSet && nextSet(prevSet, slot.repRangeMin, slot.repRangeMax, slot.weightIncrementPct ?? DEFAULT_INCREMENT_PCT);
+    const suggestion = prevSet && nextSet(prevSet, slot.repRangeMin, slot.repRangeMax, progression, inc);
     if (suggestion) {
       set.baseWeight = suggestion.weight;
       set.baseReps = suggestion.reps;

@@ -167,12 +167,16 @@ touch `localStorage` directly elsewhere):
   the fixed `MUSCLE_GROUPS` options in `js/ui.js` (defaults to `"Other"` for
   entries created before this field existed). Set at creation via
   `Store.addExercise(name, muscleGroup)` and changed afterwards only through
-  `Store.updateExercise` (see Exercise library below). Weight units are pounds throughout the UI; nothing in the data model
-  is unit-typed, it's just a number. Progression weight increments are a
-  percentage of the current weight, not a flat lb amount (`+%` labels,
-  `slot.weightIncrementPct`, 2.5% default via `DEFAULT_INCREMENT_PCT` in
-  `js/progression.js`, missing on pre-existing slots falls back to the same
-  default) — see `nextSet` below.
+  `Store.updateExercise` (see Exercise library below).
+  Weight units are pounds throughout the UI; nothing in the data model is
+  unit-typed, it's just a number. An exercise also carries an optional
+  `minIncrement` (lb): the smallest weight step its equipment allows (5 for
+  dumbbells that go 20, 25, 30; 10 for most machines), 2.5 when missing.
+  It lives on the library entry on purpose — it is a fact about the
+  equipment, not about one day's slot — so it is edited once (the "Min
+  step" box in any Program slot row of that exercise, or Settings) and
+  read by every slot, day and mesocycle whenever a prediction is built;
+  it is never copied into a slot or a workout. See `nextSet` below.
   Each real muscle group has its own validated categorical color
   (`--mg-*` custom properties in `css/style.css`, applied via
   `renderMuscleTag()`/`muscleGroupClass()` in `js/ui.js` — always go
@@ -189,7 +193,7 @@ touch `localStorage` directly elsewhere):
   truth for what `#/today` and `#/program` operate on. Each mesocycle owns
   its **live day template** (`days[]`, each with an ordered `exercises[]` of
   "slots" — a slot references an exercise plus its target sets/rep
-  range/weight increment). Editing a slot or day here always affects the
+  range/progression preset). Editing a slot or day here always affects the
   future, since this *is* the template. An optional `shifts` array
   (`[{date, days}]`, see Shifts and missed workouts below) moves the
   schedule after a missed day; a mesocycle without the key behaves exactly
@@ -340,35 +344,53 @@ lifted. A consequence is that a skipped set is saved blank, which is why the
 lookup is per set index (a skipped set falls back to an older workout
 instead of losing its prediction). Unfinished workouts from before this
 change carry a `prefilled` key on each set; `migrateLegacyPrefill`
-migrates those once (clears untouched values back to blank). The rep count that triggers a weight bump depends on
-the previous set's weight, classified by `weightClass()` purely from that
-number (`LIGHT_WEIGHT_THRESHOLD` 45lb, `HEAVY_WEIGHT_THRESHOLD` 135lb — no
-per-exercise config): light/medium still require hitting the literal top of
-the rep range, but heavy exercises trigger at the range's midpoint
-(`weightBumpTriggerReps`) — one more rep at a heavy weight is
-disproportionately harder than at a light one, so a smaller, more frequent
-weight bump is the smoother way up rather than forcing a full rep-range
-climb every time. Below that trigger: +1 rep at the same weight, capped at
-`repRangeMax`. At the trigger: weight goes up by `weightIncrementPct`%,
-rounded to the nearest `PLATE_INCREMENT` (2.5lb) — and floored to *at least*
-one plate increment even if the raw percentage of a light weight would round
-back down to the same number (e.g. 20lb at 2.5% rounds to 20, not 20.5),
-which would otherwise silently stall that exercise's progression forever.
-`weightIncrementPct` is defined as the week-over-week weight increase at a
-*constant* rep count, so the new rep target after a bump is **not** reset to
-`repRangeMin` — that would read as an accidental deload (95lb×12 → 97.5lb×8
-is a much easier set than 95×12, even though the weight went up). Instead
-it's computed via `equivalentReps` (the same estimate `setRepsHint` uses to
-re-hint reps after a same-workout weight edit, see below): one rep lost per
-`pctPerRep(baseWeight)`% of load increase — 15% for light weights, 2.5% for
-heavy, linearly interpolated by weight in between. The light rate is fitted
-to real week-over-week progressions (17.5×9 → 20×8, 15×8 → 20×6): light
-exercises move in big equipment-forced jumps (next dumbbell up) that cost
-far fewer reps than the same percentage on a heavy lift. Don't swap back to
-a single 1RM formula (Epley/Brzycki) — that was the previous version, and
-because it assumes one rep/weight curve for every exercise it turned
-15×9 → 20lb into 20×1. The medium band is interpolated, not fitted to data.
-Both call sites clamp the estimate to `[repRangeMin, repRangeMax]`. No prior history → plain "wt"/"reps" placeholders (manual
+migrates those once (clears untouched values back to blank). Each program slot has a
+`progression` preset, and the weight step comes from the exercise's
+`minIncrement` (`PRESETS` and `nextSet` in `js/progression.js`):
+
+- Light: fill the rep range, then add one minimum step.
+- Moderate (the default): fill the rep range, then add about 2.5 % of the
+  weight.
+- Aggressive: add weight from the middle of the range
+  (`repRangeMin + ceil((max - min) / 2)`), about 5 % at a time.
+
+Below the preset's trigger the next target is one more rep at the same
+weight (capped at `repRangeMax`). At the trigger the weight goes up by the
+preset's percentage rounded to the NEAREST whole number of minimum steps,
+never fewer than one (`jumpedWeight`) — so a light weight still moves (2.5 %
+of 20 lb is nothing, the step is one dumbbell up), and Light and Moderate
+give the same jump wherever 2.5 % is under one and a half steps. The rep
+target after a jump is **not** reset to `repRangeMin` — that would read as
+an accidental deload (95x12 → 97.5x8 is a much easier set than 95x12).
+It is `equivalentReps` (the same estimate `setRepsHint` uses to re-hint
+reps after a same-workout weight edit, see below): one rep lost per
+`pctPerRep(baseWeight)`% of load increase, where `pctPerRep` is one rep per
+2.5 lb, held between 2.5 % (from 100 lb up, in line with published
+reps-at-percentage tables) and 15 % (under 17 lb). The "one rep per 2.5 lb"
+is fitted to the user's own week-over-week progressions (17.5x9 → 20x8,
+15x8 → 20x6), which a test pins; everything between 17 and 100 lb
+stretches those two points. Don't swap back to a single 1RM formula
+(Epley/Brzycki): because it assumes one rep/weight curve for every exercise
+it turned 15x9 → 20 lb into 20x1. If the estimate lands below
+`repRangeMin` (a 10 lb machine step on a light weight), the weight does not
+go up yet: the target is one more rep at the same weight, past the range
+top if need be, until the jump lands inside the range. A set that missed
+its target just gets "logged reps + 1" next time — there is no automatic
+drop in weight (sets are taken to failure, and with coarse steps a back-off
+only repeats the same failed jump). Bodyweight sets (0 lb) add a rep with
+no cap. An earlier version had weight classes (light under 45 lb, heavy from
+135 lb with a midpoint trigger) and a per-slot `weightIncrementPct`; both
+are gone. The classes made the rule jump at 135 lb and, between about 35
+and 122 lb, let the weight rise every week at no rep cost. Slots and
+workout entries saved before presets still carry only `weightIncrementPct`:
+`progressionOf` maps it when read (under 1.25 → light, up to 3.75 →
+moderate, above → aggressive, missing → moderate), with no migration.
+A workout entry snapshots its slot's `progression` like the rep range; a
+preset or range edit on Program rebuilds the predictions of today's
+untouched entry through reconciliation, and a `minIncrement` change calls
+`refreshPredictions()`. The design, its sources and the simulations behind
+it are summarised in the commit that introduced it.
+No prior history → plain "wt"/"reps" placeholders (manual
 baseline).
 
 A **finished** workout's `exercises[]` snapshot is frozen — later template
@@ -376,7 +398,7 @@ edits never rewrite it, so history stays accurate to what was actually
 logged. An **unfinished** one dated today (or later) is not: every time
 `getTodayContext()` reads it, `reconcileWorkoutWithTemplate()` re-syncs it
 against the day template's current slots (added/removed exercises,
-reordered slots, changed sets/rep range/increment), preserving any sets
+reordered slots, changed sets/rep range/preset), preserving any sets
 already logged (lowering a slot's sets only drops trailing untouched
 sets; sets added because the target went up get their prediction there).
 An exercise whose slot left the template is dropped only when none of its

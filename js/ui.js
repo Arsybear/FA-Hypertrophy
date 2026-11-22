@@ -1,4 +1,5 @@
 import { Store } from "./store.js";
+import { DEFAULT_PROGRESSION, PROGRESSIONS } from "./progression.js";
 
 // updateAvailable lives outside App.ui (which resets on every hashchange)
 // since it needs to persist across navigation until the user reloads.
@@ -78,6 +79,29 @@ export function renderMuscleGroupSelect(dataRole, dataAttrs = "", lockedValue = 
   return `<select data-role="${dataRole}" ${dataAttrs} aria-label="Muscle group" ${lockedValue ? 'disabled data-locked="true"' : ""}>
     ${MUSCLE_GROUPS.map((g) => `<option value="${g}" ${g === selected ? "selected" : ""}>${g}</option>`).join("")}
   </select>`;
+}
+
+// The progression preset choice (Program slot row, both add forms).
+const PRESET_LABELS = { light: "Light", moderate: "Moderate", aggressive: "Aggressive" };
+
+export function renderProgressionSelect(dataRole, dataAttrs = "", selected = DEFAULT_PROGRESSION) {
+  return `<select data-role="${dataRole}" ${dataAttrs} aria-label="Progression">
+    ${PROGRESSIONS.map((p) => `<option value="${p}" ${p === selected ? "selected" : ""}>${PRESET_LABELS[p]}</option>`).join("")}
+  </select>`;
+}
+
+// What each preset does, in the user's terms (see nextSet in progression.js).
+export const PRESET_HELP = `<ul class="preset-help muted">
+  <li>Light: fill the rep range, then add the smallest step.</li>
+  <li>Moderate: fill the rep range, then add about 2.5 %.</li>
+  <li>Aggressive: add weight from the middle of the range, about 5 % at a time.</li>
+</ul>`;
+
+// The "Min step (lb)" box: the library exercise's minIncrement, one value
+// per exercise wherever it shows (empty means the 2.5 default).
+export function renderMinStepInput(dataRole, value, dataAttrs = "") {
+  return `<input type="number" inputmode="decimal" step="any" min="0.25" max="100" placeholder="2.5"
+    data-role="${dataRole}" ${dataAttrs} value="${escapeHtml(value ?? "")}">`;
 }
 
 export function currentRoute() {

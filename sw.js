@@ -1,4 +1,4 @@
-const CACHE_NAME = "fa-hypertrophy-v31";
+const CACHE_NAME = "fa-hypertrophy-v32";
 const ASSETS = [
   "./",
   "index.html",

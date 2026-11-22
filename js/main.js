@@ -88,7 +88,7 @@ export function handleGlobalChange(e) {
   const route = currentRoute();
   if (route === "today" && t.matches('input[data-role="set-done"]')) handleSetDoneChange(t);
   else if (route === "today" && t.matches("input[data-field]")) handleTodayChange(t);
-  else if (route === "program" && t.matches('input[data-role^="slot-"]')) handleProgramChange(t);
+  else if (route === "program" && t.matches('[data-role^="slot-"]')) handleProgramChange(t);
   else if (route === "settings" && t.dataset.role === "import-file") handleImportFile(t);
   else if (route === "settings" && t.dataset.role === "new-meso-start-date") updateStartWeekdayHint(t, "new-meso-start-weekday-hint");
   else if (route === "settings" && t.matches('[data-role^="edit-"]')) handleSettingsChange(t);

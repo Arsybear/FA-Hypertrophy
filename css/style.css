@@ -401,6 +401,14 @@ label input, label select { margin-top: 4px; }
 .ex-note { font-size: 13px; color: var(--text); opacity: 0.8; font-style: italic; overflow-wrap: anywhere; }
 .hint { font-size: 12px; margin: 2px 0 10px; }
 
+/* What the progression presets do: under the select in the add forms, and
+   behind one collapsed line at the top of Program. */
+.preset-help { margin: 0 0 10px; padding-left: 18px; font-size: 12px; line-height: 1.45; }
+.preset-help li + li { margin-top: 2px; }
+.preset-explainer { margin: -4px 0 12px; }
+.preset-explainer summary { min-height: var(--tap); padding: 12px 0; line-height: 20px; color: var(--accent-soft); font-size: 14px; cursor: pointer; }
+.preset-explainer .preset-help { margin-top: 0; }
+
 /* A missed training day, offered on the viewed date. */
 .missed-card { border-color: color-mix(in srgb, var(--warn) 45%, var(--border)); }
 .missed-title { font-size: 17px; font-weight: 700; }
@@ -515,7 +523,11 @@ label input, label select { margin-top: 4px; }
 /* The negative margin lets icon buttons bleed into the padding; the
    confirm buttons are boxed and must stay inside it. */
 .slot-actions:has(.btn) { margin: 0; }
-.slot-fields { display: grid; grid-template-columns: 1fr 2fr 1fr; gap: 8px; margin-top: 8px; }
+/* Two rows on three equal columns: Sets | Rep range (2), then
+   Progression (2) | Min step, so the boxes line up at any width. */
+.slot-fields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
+.slot-fields > label:nth-child(2), .slot-fields > .slot-progression { grid-column: span 2; }
+.slot-fields select { padding: 8px 6px; }
 .slot-fields label { margin: 0; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
 .slot-fields input { text-align: center; padding: 8px 4px; }
 .rep-pair { display: flex; align-items: center; gap: 4px; color: var(--muted); }
