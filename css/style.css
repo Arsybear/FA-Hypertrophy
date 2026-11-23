@@ -748,7 +748,15 @@ label input, label select { margin-top: 4px; }
   .set-row { gap: 6px; }
 }
 
+/* The answer to a swipe (js/main.js): the screen, the week or the calendar's
+   month it opened slides in from the side the finger came from. */
+@keyframes slide-next { from { transform: translateX(32px); opacity: 0; } }
+@keyframes slide-prev { from { transform: translateX(-32px); opacity: 0; } }
+.slide-next { animation: slide-next 180ms ease-out; }
+.slide-prev { animation: slide-prev 180ms ease-out; }
+
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; }
+  .slide-next, .slide-prev { animation: none; }
   button:active:not(:disabled), .btn:active { transform: none; }
 }

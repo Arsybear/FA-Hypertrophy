@@ -113,13 +113,32 @@ function markShortViewport() {
   document.documentElement.classList.toggle("short-viewport", short);
 }
 
-// A swipe left or right on a screen opens the next or the previous screen of
-// the bottom nav, through the address like a tap on its link (so the
-// hashchange handler commits a focused box). Not from the screen's edges,
-// where iOS starts its own back and forward swipes, not with two fingers,
-// and not while a box has focus: a route change closes an open form and
-// would drop what was typed into it.
+// A swipe left or right moves on or back, by a tap on the control that does
+// it (so everything a tap does happens: a route change commits a focused
+// box in the hashchange handler). Where it starts decides what moves: on
+// the open month calendar its months, on the week strip its weeks, anywhere
+// else the screens of the bottom nav. What it opened slides in from the side
+// the finger came from. Not from the screen's edges, where iOS starts its
+// own back and forward swipes, not with two fingers, and not while a box has
+// focus: a route change closes an open form and would drop what was typed
+// into it.
 const SWIPE_EDGE = 24;
+let slide = 0; // the direction of the swipe whose screen is still to be drawn
+function swipeControl(from, step) {
+  const name = step > 0 ? "Next" : "Previous";
+  const calendar = from.closest(".calendar-panel");
+  if (calendar) return calendar.querySelector(`button[aria-label="${name} month"]:not(:disabled)`);
+  const strip = from.closest(".week-strip");
+  if (strip) return strip.querySelector(`a[aria-label="${name} week"]`);
+  const links = [...document.querySelectorAll(".bottom-nav .nav-link")];
+  return links[links.findIndex((a) => a.dataset.route === currentRoute()) + step] || null;
+}
+function playSlide(el, step) {
+  if (!el) return;
+  el.classList.remove("slide-next", "slide-prev");
+  void el.offsetWidth; // restarts the animation when one is still running
+  el.classList.add(step > 0 ? "slide-next" : "slide-prev");
+}
 function attachSwipeNav(view) {
   let start = null;
   view.addEventListener("touchstart", (e) => {
@@ -127,17 +146,21 @@ function attachSwipeNav(view) {
     const edge = t.clientX < SWIPE_EDGE || t.clientX > innerWidth - SWIPE_EDGE;
     const typing = document.activeElement
       && document.activeElement.matches('#view input:not([type="checkbox"], [type="radio"]), #view select, #view textarea');
-    start = e.touches.length === 1 && !edge && !typing ? { x: t.clientX, y: t.clientY, at: e.timeStamp } : null;
+    slide = 0;
+    start = e.touches.length === 1 && !edge && !typing ? { x: t.clientX, y: t.clientY, at: e.timeStamp, from: e.target } : null;
   }, { passive: true });
   view.addEventListener("touchcancel", () => { start = null; }, { passive: true });
   view.addEventListener("touchend", (e) => {
     if (!start) return;
     const t = e.changedTouches[0];
     const step = swipeStep(t.clientX - start.x, t.clientY - start.y, e.timeStamp - start.at);
+    const control = step && start.from.closest && swipeControl(start.from, step);
     start = null;
-    const links = [...document.querySelectorAll(".bottom-nav .nav-link")];
-    const next = step && links[links.findIndex((a) => a.dataset.route === currentRoute()) + step];
-    if (next) location.hash = next.getAttribute("href");
+    if (!control) return;
+    const month = control.matches("button");
+    slide = month ? 0 : step; // a week or a screen is drawn by the hashchange handler
+    control.click();
+    if (month) playSlide(view.querySelector(".calendar-panel"), step); // the month is drawn at once
   }, { passive: true });
 }
 
@@ -163,6 +186,8 @@ window.addEventListener("hashchange", (e) => {
   // day on screen (see pinViewedDay).
   knownToday = schedule.isoDate(new Date());
   renderCurrentView();
+  if (slide) playSlide(document.getElementById("view"), slide);
+  slide = 0;
 });
 window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("view").addEventListener("click", handleGlobalClick);

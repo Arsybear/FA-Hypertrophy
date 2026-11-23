@@ -27,7 +27,8 @@ prefill (no RIR tracking, no volume-landmark dashboard).
   mesocycle to fit", which moves every later workout along with it. After
   a longer break, pick which day of the program to resume with. Undo while
   nothing is logged.
-- Swipe left or right to move between Today, Program, History and Settings.
+- Swipe left or right to move between Today, Program, History and Settings;
+  on the week strip to change the week, on the month calendar the month.
 - A summary of each finished workout, with weight and rep PR badges.
 - Per-exercise history across every day it is trained on, with top-set and
   volume charts.

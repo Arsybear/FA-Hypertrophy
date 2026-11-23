@@ -786,17 +786,26 @@ interactive elements as `data-action="…"` + a case in the relevant
 nor re-renders it. Escape closes the open overlay by clicking its
 `close-*` button.
 
-A swipe left or right on a screen opens the next or the previous screen of
-the bottom nav (`attachSwipeNav` in `js/main.js`, touch events on `#view`,
-passive). It sets `location.hash` to that nav link's address, so it is an
-ordinary route change and the `hashchange` handler commits a focused box.
-`swipeStep` (`js/ui.js`) decides: at least 60px, at most 600ms, and twice as
-far sideways as up or down. A swipe is ignored when it starts within 24px of
-either screen edge (iOS starts its own back and forward swipes there), with
-two fingers, or while a text box or select in `#view` has focus (a route
-change closes an open form and would drop what was typed into it). The ends
-do not wrap, and an open overlay makes `#view` inert, so nothing swipes
-under it.
+A swipe left or right moves on or back (`attachSwipeNav` in `js/main.js`,
+touch events on `#view`, passive). Where it starts decides what moves
+(`swipeControl`): on the open month calendar its months, on the week strip
+its weeks, anywhere else the screens of the bottom nav. It works by
+`click()` on the control a tap would use (the calendar's month button, the
+week arrow, the nav link), so a disabled or missing control means nothing
+happens (the calendar's start month, the first week, the first and last
+screen: nothing wraps), and a week or a screen is an ordinary route change
+whose `hashchange` handler commits a focused box. `swipeStep` (`js/ui.js`)
+decides: at least 60px, at most 600ms, and twice as far sideways as up or
+down. A swipe is ignored when it starts within 24px of either screen edge
+(iOS starts its own back and forward swipes there), with two fingers, or
+while a text box or select in `#view` has focus (a route change closes an
+open form and would drop what was typed into it). An open overlay makes
+`#view` inert, so nothing swipes under it. What the swipe opened slides in
+from the side the finger came from (`playSlide`: the classes `slide-next` /
+`slide-prev` on `#view`, or on the calendar panel for a month; 180ms, off
+under `prefers-reduced-motion`). Only the new content moves: the old screen
+is gone at once, there is no pane that follows the finger. A tap on the
+same controls does not animate.
 
 Keyboard and screen-reader behaviour lives in `renderCurrentView`
 (`js/ui.js`), once for every view: while `#overlay-root` has content,
