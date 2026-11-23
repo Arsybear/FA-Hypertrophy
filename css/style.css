@@ -39,6 +39,8 @@
   --z-nav: 10;
   --z-overlay-backdrop: 100;
   --z-overlay: 101;
+  /* The home indicator's inset, in one place so .short-viewport can drop it. */
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
 
   /* Categorical palette, one hue per muscle group, validated against
      --surface with the dataviz skill's validate_palette.js (see CLAUDE.md).
@@ -92,9 +94,12 @@ body {
   overscroll-behavior: none;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
+  /* Where the page runs behind the status bar (an iOS home-screen app with a
+     translucent bar) the pane starts under the bar, so what scrolls never
+     shows through the clock. js/main.js reads this inset back from here. */
+  top: env(safe-area-inset-top, 0px);
   padding: 16px;
-  padding-top: calc(16px + env(safe-area-inset-top, 0px));
-  padding-bottom: calc(96px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(96px + var(--safe-bottom));
   max-width: 560px;
   margin: 0 auto;
 }
@@ -223,7 +228,10 @@ button:active:not(:disabled), .btn:active { transform: scale(0.97); }
   color: var(--muted);
   text-decoration: none;
 }
-.icon-btn:hover, .icon-btn.active { background: var(--surface-2); color: var(--text); }
+.icon-btn.active { background: var(--surface-2); color: var(--text); }
+/* Only where a pointer can hover: on a phone the hover look stayed on the
+   button after a tap (a grey disc on the week arrow). */
+@media (hover: hover) { .icon-btn:hover { background: var(--surface-2); color: var(--text); } }
 .icon-btn[aria-disabled="true"] { visibility: hidden; }
 
 :focus-visible { outline: 2px solid var(--accent-soft); outline-offset: 2px; }
@@ -246,6 +254,25 @@ input, select {
    :focus-visible outline (a border colour does nothing on a native radio,
    and a ticked circle's green border outranks it). */
 input:not([type="radio"], [type="checkbox"]):focus, select:focus { outline: none; border-color: var(--accent-soft); }
+/* iOS draws a select and a date input as native buttons and then sizes them
+   itself: min-height is replaced (a select came out 37px beside a 44px
+   input) and a date input's width becomes content-box (it stuck out of its
+   card by its own padding and border), with its value centred.
+   appearance: none switches that off, so both are plain boxes with the box
+   model of every other input. The select's arrow is drawn here instead (a
+   data URI: nothing is loaded from elsewhere); its colour is --muted. */
+select, input[type="date"] { -webkit-appearance: none; appearance: none; }
+select {
+  padding-right: 32px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%238f97a5' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  background-size: 16px;
+}
+input[type="date"] { min-width: 0; max-width: 100%; text-align: left; }
+/* The value's own box on iOS (a rule of its own: other browsers drop a rule
+   whose selector they do not know). An empty value keeps one line's height. */
+input::-webkit-date-and-time-value { margin: 0; min-height: 1.2em; min-height: 1lh; text-align: left; }
 input:disabled, select:disabled { opacity: 0.6; }
 /* Full --muted (6.6:1 on --bg): readable, still well short of typed --text. */
 input::placeholder { color: var(--muted); opacity: 1; }
@@ -541,7 +568,7 @@ label input, label select { margin-top: 4px; }
    Progression (2) | Min step, so the boxes line up at any width. */
 .slot-fields { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-top: 8px; }
 .slot-fields > label:nth-child(2), .slot-fields > .slot-progression { grid-column: span 2; }
-.slot-fields select { padding: 8px 6px; }
+.slot-fields select { padding: 8px 28px 8px 6px; background-position: right 8px center; }
 .slot-fields label { margin: 0; font-size: 10px; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; }
 .slot-fields input { text-align: center; padding: 8px 4px; }
 .rep-pair { display: flex; align-items: center; gap: 4px; color: var(--muted); }
@@ -617,7 +644,7 @@ label input, label select { margin-top: 4px; }
   border-bottom: none;
   border-radius: 20px 20px 0 0;
   padding: 18px 16px;
-  padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+  padding-bottom: calc(18px + var(--safe-bottom));
   z-index: var(--z-overlay);
 }
 .history-sheet-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
@@ -693,8 +720,13 @@ label input, label select { margin-top: 4px; }
   -webkit-backdrop-filter: blur(14px);
   backdrop-filter: blur(14px);
   border-top: 1px solid var(--border);
-  padding: 6px calc(8px + env(safe-area-inset-right, 0px)) calc(6px + env(safe-area-inset-bottom, 0px)) calc(8px + env(safe-area-inset-left, 0px));
+  padding: 6px calc(8px + env(safe-area-inset-right, 0px)) calc(6px + var(--safe-bottom)) calc(8px + env(safe-area-inset-left, 0px));
 }
+/* Set on <html> by markShortViewport (js/main.js): iOS gave the page a
+   viewport one status bar shorter than the screen, and the empty band under
+   it already clears the home indicator, so the inset would count twice. */
+.short-viewport { --safe-bottom: 0px; }
+.short-viewport .bottom-nav { padding-bottom: 0; }
 .nav-link {
   flex: 1;
   max-width: 140px;

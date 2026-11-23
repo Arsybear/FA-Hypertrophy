@@ -105,6 +105,15 @@ export function renderMinStepInput(dataRole, value, dataAttrs = "") {
     data-role="${dataRole}" ${dataAttrs} value="${escapeHtml(value ?? "")}">`;
 }
 
+// A finger's travel as a move between the bottom nav's screens: 1 to the
+// screen on the right (a swipe to the left), -1 to the one on the left, 0
+// for anything that is not a quick, mostly horizontal swipe (a scroll, a
+// tap, a slow drag).
+export function swipeStep(dx, dy, ms) {
+  if (ms > 600 || Math.abs(dx) < 60 || Math.abs(dx) < 2 * Math.abs(dy)) return 0;
+  return dx < 0 ? 1 : -1;
+}
+
 // An unknown name (#/bogus) is Today, so the screen drawn, the active nav
 // link and the handlers agree.
 export function currentRoute() {

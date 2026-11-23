@@ -5,8 +5,8 @@ import * as ui from "./ui.js";
 import * as workout from "./workout.js";
 import { Store } from "./store.js";
 import { handleChartPoint } from "./chart.js";
-import { App, currentRoute, registerRoute, renderCurrentView, showStorageError, wrapOverlayFocus } from "./ui.js";
-import { handleSetDoneChange, handleTodayAction, handleTodayChange, renderToday } from "./views/today.js";
+import { App, currentRoute, registerRoute, renderCurrentView, showStorageError, swipeStep, wrapOverlayFocus } from "./ui.js";
+import { handleMissedPick, handleSetDoneChange, handleTodayAction, handleTodayChange, renderToday } from "./views/today.js";
 import { handleProgramAction, handleProgramChange, renderProgram } from "./views/program.js";
 import { handleHistoryAction, renderHistory } from "./views/history.js";
 import { handleImportFile, handleSettingsAction, handleSettingsChange, renderSettings, updateStartWeekdayHint } from "./views/settings.js";
@@ -88,6 +88,7 @@ export function handleGlobalChange(e) {
   const route = currentRoute();
   if (route === "today" && t.matches('input[data-role="set-done"]')) handleSetDoneChange(t);
   else if (route === "today" && t.matches("input[data-field]")) handleTodayChange(t);
+  else if (route === "today" && t.dataset.role === "missed-pick") handleMissedPick(t);
   else if (route === "program" && t.matches('[data-role^="slot-"]')) handleProgramChange(t);
   else if (route === "settings" && t.dataset.role === "import-file") handleImportFile(t);
   else if (route === "settings" && t.dataset.role === "new-meso-start-date") updateStartWeekdayHint(t, "new-meso-start-weekday-hint");
@@ -96,6 +97,49 @@ export function handleGlobalChange(e) {
   else if (t.matches(NEW_EXERCISE_NAME_INPUT_ROLES)) handleNewNameTyped(t);
 }
 
+
+// iOS 26 and 27 give a home-screen app that runs behind a translucent
+// status bar a viewport one status bar shorter than the screen (WebKit bug
+// 313800): the page still starts at the top, and a band as tall as the top
+// inset is left under it where nothing can be drawn. That band already
+// clears the home indicator, so the bottom inset would count twice (the nav
+// stood 93px above the screen's edge): the class drops it, see
+// css/style.css. Never set where the top inset is 0 (an opaque status bar)
+// or the viewport is the screen's height (the bug fixed).
+function markShortViewport() {
+  const top = parseFloat(getComputedStyle(document.getElementById("view")).top) || 0;
+  const short = navigator.standalone === true && innerHeight > innerWidth && top > 0
+    && Math.abs(screen.height - innerHeight - top) <= 1;
+  document.documentElement.classList.toggle("short-viewport", short);
+}
+
+// A swipe left or right on a screen opens the next or the previous screen of
+// the bottom nav, through the address like a tap on its link (so the
+// hashchange handler commits a focused box). Not from the screen's edges,
+// where iOS starts its own back and forward swipes, not with two fingers,
+// and not while a box has focus: a route change closes an open form and
+// would drop what was typed into it.
+const SWIPE_EDGE = 24;
+function attachSwipeNav(view) {
+  let start = null;
+  view.addEventListener("touchstart", (e) => {
+    const t = e.touches[0];
+    const edge = t.clientX < SWIPE_EDGE || t.clientX > innerWidth - SWIPE_EDGE;
+    const typing = document.activeElement
+      && document.activeElement.matches('#view input:not([type="checkbox"], [type="radio"]), #view select, #view textarea');
+    start = e.touches.length === 1 && !edge && !typing ? { x: t.clientX, y: t.clientY, at: e.timeStamp } : null;
+  }, { passive: true });
+  view.addEventListener("touchcancel", () => { start = null; }, { passive: true });
+  view.addEventListener("touchend", (e) => {
+    if (!start) return;
+    const t = e.changedTouches[0];
+    const step = swipeStep(t.clientX - start.x, t.clientY - start.y, e.timeStamp - start.at);
+    start = null;
+    const links = [...document.querySelectorAll(".bottom-nav .nav-link")];
+    const next = step && links[links.findIndex((a) => a.dataset.route === currentRoute()) + step];
+    if (next) location.hash = next.getAttribute("href");
+  }, { passive: true });
+}
 
 registerRoute("today", renderToday);
 registerRoute("program", renderProgram);
@@ -123,6 +167,11 @@ window.addEventListener("hashchange", (e) => {
 window.addEventListener("DOMContentLoaded", () => {
   document.getElementById("view").addEventListener("click", handleGlobalClick);
   document.getElementById("view").addEventListener("change", handleGlobalChange);
+  attachSwipeNav(document.getElementById("view"));
+  // Again on load and on every size change: the insets can still be 0 this
+  // early in a cold start.
+  markShortViewport();
+  for (const type of ["load", "pageshow", "resize", "orientationchange"]) window.addEventListener(type, markShortViewport);
   // Full-screen overlays (see index.html) render outside #view, so they need
   // their own delegated listener — handleGlobalClick itself doesn't care
   // which container an event came from (it re-derives state from Store and
@@ -142,8 +191,9 @@ window.addEventListener("DOMContentLoaded", () => {
   document.addEventListener("visibilitychange", () => {
     if (document.hidden) {
       if (document.activeElement && document.activeElement.matches("input, select")) document.activeElement.blur();
-    } else if (pinViewedDay(false)) {
-      renderCurrentView();
+    } else {
+      markShortViewport();
+      if (pinViewedDay(false)) renderCurrentView();
     }
   });
   Store.onWriteError = showStorageError;

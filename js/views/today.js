@@ -202,21 +202,44 @@ function renderNotices(meso, dayTemplate, workout, dateIso, isToday, madeUp) {
   return html;
 }
 
-// A training day earlier in the week with nothing logged (findMissedDay):
-// do it on the viewed date, either alone (a makeup on a rest day) or by
-// shifting every later workout along. The checkbox is read when the button
-// is pressed, like the scope radios.
-function renderMissedCard(meso, missed, dateIso, isToday) {
-  if (!missed) return "";
-  const n = daysBetween(parseLocalDate(missed.dateIso), parseLocalDate(dateIso));
+const missedHint = (days) => `Later workouts move ${plural(days, "day")}. Unticked, only this workout moves.`;
+
+// Training days before the viewed date with nothing logged (findMissedDays):
+// do one on the viewed date, either alone (a makeup on a rest day) or by
+// shifting every later workout along. With more than one day of the program
+// missed (a week off) a select names them and the user picks which one to
+// resume with; the earliest is the default. The select and the checkbox are
+// read when the button is pressed, like the scope radios.
+function renderMissedCard(meso, missedDays, dateIso, isToday) {
+  if (missedDays.length === 0) return "";
+  const picked = missedDays.find((m) => m.dateIso === App.ui.missedPick) || missedDays[0];
+  const days = (m) => daysBetween(parseLocalDate(m.dateIso), parseLocalDate(dateIso));
   const forced = !!resolveDayForDate(meso, parseLocalDate(dateIso));
+  const head = missedDays.length === 1
+    ? `<p class="missed-title">Missed: ${escapeHtml(picked.dayTemplate.name)}</p>
+    <p class="muted">${formatDay(picked.dateIso)}</p>`
+    : `<p class="missed-title">Missed workouts</p>
+    <label>Day to do
+      <select data-role="missed-pick">
+        ${missedDays.map((m) => `<option value="${m.dateIso}" data-days="${days(m)}" ${m === picked ? "selected" : ""}>${escapeHtml(m.dayTemplate.name)} · ${formatDay(m.dateIso)}</option>`).join("")}
+      </select>
+    </label>`;
   return `<div class="card missed-card">
-    <p class="missed-title">Missed: ${escapeHtml(missed.dayTemplate.name)}</p>
-    <p class="muted">${formatDay(missed.dateIso)}</p>
+    ${head}
     <label class="check-row"><input type="checkbox" data-role="missed-shift" ${forced ? "checked disabled" : ""}> Shift mesocycle to fit</label>
-    <p class="muted hint">${forced ? "This day already has a workout, so later workouts must move." : `Later workouts move ${plural(n, "day")}. Unticked, only this workout moves.`}</p>
+    <p class="muted hint" data-role="missed-hint">${forced ? "This day already has a workout, so later workouts must move." : missedHint(days(picked))}</p>
     <button class="btn primary wide" data-action="do-missed">${isToday ? "Do it today" : `Do it on ${formatShortDate(dateIso)}`}</button>
   </div>`;
+}
+
+// Another missed day picked: how far the later workouts move depends on it.
+// The hint is patched in place (a re-render would untick the checkbox), and
+// the pick is kept for the next render.
+export function handleMissedPick(select) {
+  App.ui.missedPick = select.value;
+  const card = select.closest(".missed-card");
+  if (card.querySelector('input[data-role="missed-shift"]').disabled) return;
+  card.querySelector('[data-role="missed-hint"]').textContent = missedHint(Number(select.selectedOptions[0].dataset.days));
 }
 
 // Totals for a finished workout: complete sets, volume and PRs.
@@ -249,9 +272,9 @@ function renderPlanPreview(dayTemplate) {
 }
 
 export function renderToday(container) {
-  const { meso, dayTemplate, workout, dateIso, isToday, missed, madeUp } = getTodayContext();
+  const { meso, dayTemplate, workout, dateIso, isToday, missedDays, madeUp } = getTodayContext();
   if (!meso) { container.innerHTML = emptyMesoState(); return; }
-  const notices = renderNotices(meso, dayTemplate, workout, dateIso, isToday, madeUp) + renderMissedCard(meso, missed, dateIso, isToday);
+  const notices = renderNotices(meso, dayTemplate, workout, dateIso, isToday, madeUp) + renderMissedCard(meso, missedDays, dateIso, isToday);
 
   if (!dayTemplate && !workout) {
     const noDays = meso.days.length === 0;
@@ -534,7 +557,8 @@ export function handleTodayAction(action, btn, view) {
     if (action === "undo-missed") undoMissedDay(meso, dateIso);
     else {
       const box = view.querySelector('input[data-role="missed-shift"]');
-      doMissedDay(meso, dateIso, isoDate(new Date()), !!(box && box.checked));
+      const pick = view.querySelector('select[data-role="missed-pick"]');
+      doMissedDay(meso, dateIso, isoDate(new Date()), !!(box && box.checked), pick ? pick.value : null);
     }
     closePanels();
     renderCurrentView();

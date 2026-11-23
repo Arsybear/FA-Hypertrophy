@@ -24,8 +24,10 @@ prefill (no RIR tracking, no volume-landmark dashboard).
   backfill workouts, also late (a workout left half logged is pointed out
   the next time you open the app).
 - Missed a day: do it on a later day, either as a one-off or with "Shift
-  mesocycle to fit", which moves every later workout along with it. Undo
-  while nothing is logged.
+  mesocycle to fit", which moves every later workout along with it. After
+  a longer break, pick which day of the program to resume with. Undo while
+  nothing is logged.
+- Swipe left or right to move between Today, Program, History and Settings.
 - A summary of each finished workout, with weight and rep PR badges.
 - Per-exercise history across every day it is trained on, with top-set and
   volume charts.

@@ -5,7 +5,12 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
   <meta name="theme-color" content="#0b0d10">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <!-- black, not black-translucent: with the translucent bar iOS 26 and 27
+       give a home-screen app a viewport one status bar shorter than the
+       screen and leave an empty band under the bottom nav (WebKit bug
+       313800). An install that still runs translucent is handled by
+       markShortViewport in js/main.js. -->
+  <meta name="apple-mobile-web-app-status-bar-style" content="black">
   <title>FA Hypertrophy</title>
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">

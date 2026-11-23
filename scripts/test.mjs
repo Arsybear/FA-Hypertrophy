@@ -22,7 +22,8 @@ globalThis.localStorage = {
   removeItem: (k) => memory.delete(k),
 };
 const { Store, cleanMinIncrement, cleanSetValue, normalizeMesocycles, validateBackup } = await import("../js/store.js");
-const { buildEntrySets, doMissedDay, findMissedDay, generateWorkout, getExerciseHistory, getTodayContext, migrateLegacyPrefill, reconcileWorkoutWithTemplate, refreshPredictions, undoMissedDay } = await import("../js/workout.js");
+const { buildEntrySets, doMissedDay, findMissedDay, findMissedDays, generateWorkout, getExerciseHistory, getTodayContext, migrateLegacyPrefill, reconcileWorkoutWithTemplate, refreshPredictions, undoMissedDay } = await import("../js/workout.js");
+const { swipeStep } = await import("../js/ui.js");
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -892,14 +893,49 @@ Store.updateWorkout(made.id, { exercises: made.exercises });
 assert.strictEqual(undoMissedDay(activeMeso(), "2026-11-10"), false);
 assert.strictEqual(Store.getWorkouts().length, 3);
 
+// A week off (Mon 11-09, Wed 11-11 and Fri 11-13 missed): every day of the
+// program is offered once, at its earliest missed date, and the user picks
+// which one to resume with.
+seedMissed();
+const picks = (x, today = x) => findMissedDays(activeMeso(), Store.getWorkouts(), x, today).map((m) => [m.dateIso, m.dayTemplate.id]);
+assert.deepStrictEqual(picks("2026-11-10"), [["2026-11-09", "mon"]]);
+assert.deepStrictEqual(picks("2026-11-15"), [["2026-11-09", "mon"], ["2026-11-11", "wed"], ["2026-11-13", "fri"]]);
+assert.deepStrictEqual(picks("2026-11-17"), [["2026-11-09", "mon"], ["2026-11-11", "wed"], ["2026-11-13", "fri"]]); // Mon 11-16 missed too: still one entry a day
+assert.deepStrictEqual(findMissedDay(activeMeso(), Store.getWorkouts(), "2026-11-15", "2026-11-15").dateIso, "2026-11-09"); // the default is the earliest
+// Friday's day picked with a shift on rest day Sun 11-15: Sunday trains it
+// and the program goes on from there (Mon's day on Wed 11-18).
+made = doMissedDay(activeMeso(), "2026-11-15", "2026-11-15", true, "2026-11-13");
+assert.deepStrictEqual([made.date, made.dayId], ["2026-11-15", "fri"]);
+assert.deepStrictEqual(activeMeso().shifts, [{ date: "2026-11-13", days: 2 }]);
+assert.deepStrictEqual(["2026-11-16", "2026-11-17", "2026-11-18", "2026-11-20"].map((d) => dayOn(activeMeso(), d)), [null, null, "mon", "wed"]);
+assert.strictEqual(validateBackup(JSON.parse(JSON.stringify(Store.exportBackup()))), null);
+// The days skipped before the pick are not offered from an earlier date: a
+// shift from there would start under this one and move the day it placed.
+assert.deepStrictEqual([picks("2026-11-12", "2026-11-15"), picks("2026-11-11", "2026-11-15")], [[], []]);
+assert.strictEqual(doMissedDay(activeMeso(), "2026-11-12", "2026-11-15", true), null);
+assert.deepStrictEqual(activeMeso().shifts, [{ date: "2026-11-13", days: 2 }]);
+assert.strictEqual(undoMissedDay(activeMeso(), "2026-11-15"), true);
+assert.deepStrictEqual(snapshot(), beforeMissed);
+// A date that is not in the list does nothing.
+assert.strictEqual(doMissedDay(activeMeso(), "2026-11-15", "2026-11-15", true, "2026-11-10"), null);
+assert.deepStrictEqual(snapshot(), beforeMissed);
+// Wednesday's day picked without a shift: a makeup for that date only.
+made = doMissedDay(activeMeso(), "2026-11-15", "2026-11-15", false, "2026-11-11");
+assert.deepStrictEqual([made.date, made.dayId, made.makeup, made.makeupFor], ["2026-11-15", "wed", true, "2026-11-11"]);
+assert.strictEqual("shifts" in activeMeso(), false);
+assert.strictEqual(undoMissedDay(activeMeso(), "2026-11-15"), true);
+assert.deepStrictEqual(snapshot(), beforeMissed);
+
 // What Today shows: the missed day, then the move that can be undone. The
 // program() mesocycle started two weeks ago on today's weekday, nothing logged.
 seed(program());
 ctx = at();
 assert.deepStrictEqual([ctx.missed.dateIso, ctx.missed.dayTemplate.id, ctx.madeUp], [dayIso(-14), "A", null]);
+assert.strictEqual(ctx.missedDays[0], ctx.missed); // the card's list; its first entry is the default
 doMissedDay(ctx.meso, todayIso, todayIso, true);
 ctx = at();
 assert.deepStrictEqual([ctx.workout.dayId, ctx.missed, ctx.madeUp], ["A", null, { dateIso: dayIso(-14), shifted: true }]);
+assert.deepStrictEqual(ctx.missedDays, []);
 undoMissedDay(ctx.meso, todayIso);
 assert.deepStrictEqual(at().madeUp, null);
 // A makeup on a rest day keeps its own day: never dropped as a mismatch.
@@ -1582,5 +1618,10 @@ for (const file of ["index.html", "manifest.json", ...walk("js"), ...walk("css")
   await ev.responded; await w.done(ev);
   assert.deepStrictEqual(w.cacheUrls(), all);
 }
+
+// A swipe between the bottom nav's screens: quick, long enough and mostly
+// horizontal, or it is a scroll, a tap or a drag.
+assert.deepStrictEqual([swipeStep(-80, 10, 200), swipeStep(80, -10, 200)], [1, -1]); // to the left: the next screen
+assert.deepStrictEqual([swipeStep(-59, 0, 200), swipeStep(-80, 41, 200), swipeStep(-200, 20, 601), swipeStep(0, 0, 50), swipeStep(10, 300, 200)], [0, 0, 0, 0, 0]);
 
 console.log("ok");

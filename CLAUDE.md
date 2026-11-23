@@ -24,6 +24,25 @@ pane that owns all scrolling itself, also with `overscroll-behavior: none`.
 Any new full-height/scrolling UI must scroll *inside* `#view`, not by
 letting `body` scroll — don't remove these rules to "simplify" layout.
 
+On an iPhone the app runs as a home-screen app, and two things there come
+from iOS, not from this code. The status bar style is `black` (opaque), not
+`black-translucent`: with the translucent bar and `viewport-fit=cover`, iOS
+26 and 27 give the page a viewport one status bar shorter than the screen
+(WebKit bug 313800). The page still starts at the top, so an empty band as
+tall as the top inset is left under the bottom nav, and nothing can be drawn
+in it (the user's phone: the nav stood 93px above the screen's edge, 59 of
+band and 34 of safe-area padding). For an install that still runs
+translucent, `#view` starts below the status bar (`top:
+env(safe-area-inset-top)`, so scrolled content never shows through the
+clock), and `markShortViewport` (`js/main.js`) sets `.short-viewport` on
+`<html>` when the app is standalone on iOS, in portrait, the top inset is
+above 0 and `screen.height - innerHeight` equals it: the class sets
+`--safe-bottom` (the home indicator's inset, used by `#view`, the nav and
+the history sheet) to 0, because the band already clears the home
+indicator. It is never set with an opaque bar (top inset 0) or once the
+viewport is the screen's height again. None of this can be checked in a
+desktop browser: it is verified by the owner's screenshots.
+
 Every `position: fixed` element (like `#view` or `.bottom-nav`) always
 establishes its own stacking context, so a full-bleed overlay nested inside
 `#view` can never out-stack a fixed sibling like `.bottom-nav` no matter
@@ -58,7 +77,8 @@ python -m http.server
 
 Then open the printed URL. There is no lint config. `node scripts/test.mjs`
 is a small self-check of the logic that needs no browser (history matching,
-double progression, weekday resolution and shifts, missed days and undo,
+double progression, weekday resolution and shifts, missed days, the pick
+among them and undo, the swipe rule,
 reconciliation, PRs, library edits, copying a mesocycle, backup
 validation) plus the release checks: every loaded file is in `sw.js`'s
 `ASSETS`, `APP_VERSION` equals `CACHE_NAME`, and `sw.js` itself run against
@@ -167,7 +187,13 @@ any set touched, for the dot and for Today's status pill alike; typing a
 set value never re-renders, so `syncDayStatus` (`js/views/today.js`) patches
 the pill, the week-strip day and the open calendar's cell in place.
 Inputs are 16px (anything smaller makes iOS zoom the page on focus) and tap
-targets are at least 44px (`--tap`). Prediction placeholders are `--muted`
+targets are at least 44px (`--tap`). Selects and date inputs are
+`appearance: none` (the select's arrow is a data URI in the stylesheet):
+iOS draws both as native buttons and then sizes them itself, which replaced
+`min-height` (a 37px select beside a 44px input) and made a date input's
+width content-box (it stuck out of its card by its padding and border).
+Hover styles sit inside `@media (hover: hover)`: on a phone a hover look
+stays on the button after a tap. Prediction placeholders are `--muted`
 at full opacity (above 4.5:1 on the input, and lighter in weight than a
 typed value); the outline of an empty control (unticked done circle, text
 box, select) is `--control-edge`, a neutral grey just above 3:1 on the card
@@ -264,13 +290,23 @@ state.
 
 A missed training day can be done on a later day (the user's case: train
 Monday/Wednesday/Friday, miss Monday, do it Tuesday). Today shows a "Missed"
-card (`missed` from `getTodayContext`, which is `findMissedDay`) when
+card (`missedDays` from `getTodayContext`, which is `findMissedDays`) when
 nothing on the viewed date or later is logged and an earlier training day
-has no logged workout. The missed day is the EARLIEST such day back to the
-last logged workout, gap day or made-up date (at most 366 days back), so two
-missed sessions are resumed in program order. `doMissedDay` does it one of
-two ways, chosen by the card's "Shift mesocycle to fit" checkbox (read when
-the button is clicked, so it needs no `change` route):
+has no logged workout. The list holds the training days back to the last
+logged workout, gap day or made-up date (at most 366 days back), one entry
+per day template at its EARLIEST missed date, earliest first. The first
+entry is the default, so two missed sessions are resumed in program order.
+With more than one entry (the user's case: "I last didn't complete day 2 but
+took a week off and want to start on day 1 or day 3") the card shows a
+"Day to do" select and the user picks which day to resume with; the days
+missed before a later pick stay behind as they are. A day template with no
+missed date in that range is not offered (there is no shift backwards). The
+pick is kept in `App.ui.missedPick`, and choosing one patches the hint's
+day count in place (`handleMissedPick`: a re-render would untick the
+checkbox). `doMissedDay(meso, date, today, shift, pickIso)` does the picked
+day (a `pickIso` that is not in the list does nothing) one of two ways,
+chosen by the card's "Shift mesocycle to fit" checkbox (it and the select
+are read when the button is clicked):
 
 - Ticked: `Store.addShift` stores `{date: M, days: X - M}` on the mesocycle
   (M the missed date, X the day it is done). A shift inserts `days` gap days
@@ -281,7 +317,10 @@ the button is clicked, so it needs no `change` route):
   week strip, the calendar, Program's weekdays, the week number and the
   planned end all follow. Use those helpers; never work out a weekday or a
   week from `startDate` alone. A gap day never shows the Missed card (a
-  second shift from there would leave that day a rest day).
+  second shift from there would leave that day a rest day), and neither does
+  a date before a shift that is already stored (after a later pick the
+  skipped days lie there: a shift from one of them would start under the
+  stored one, move the day it placed and take its Undo away).
   Several shifts in one mesocycle add up. The planned end moves only for
   shifts dated on or before it; a copy and Program's weekdays count every
   shift. On a day that is itself a training
@@ -746,6 +785,18 @@ interactive elements as `data-action="…"` + a case in the relevant
 `handleGlobalClick` ignores it, so a click inside neither closes the sheet
 nor re-renders it. Escape closes the open overlay by clicking its
 `close-*` button.
+
+A swipe left or right on a screen opens the next or the previous screen of
+the bottom nav (`attachSwipeNav` in `js/main.js`, touch events on `#view`,
+passive). It sets `location.hash` to that nav link's address, so it is an
+ordinary route change and the `hashchange` handler commits a focused box.
+`swipeStep` (`js/ui.js`) decides: at least 60px, at most 600ms, and twice as
+far sideways as up or down. A swipe is ignored when it starts within 24px of
+either screen edge (iOS starts its own back and forward swipes there), with
+two fingers, or while a text box or select in `#view` has focus (a route
+change closes an open form and would drop what was typed into it). The ends
+do not wrap, and an open overlay makes `#view` inert, so nothing swipes
+under it.
 
 Keyboard and screen-reader behaviour lives in `renderCurrentView`
 (`js/ui.js`), once for every view: while `#overlay-root` has content,

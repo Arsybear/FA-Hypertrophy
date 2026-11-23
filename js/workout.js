@@ -194,7 +194,7 @@ export function getTodayContext() {
 
 function contextFor(dateIso, realTodayIso) {
   const meso = Store.getActiveMesocycle();
-  if (!meso) return { meso: null, dayTemplate: null, workout: null, dateIso: null, isToday: true, missed: null, madeUp: null };
+  if (!meso) return { meso: null, dayTemplate: null, workout: null, dateIso: null, isToday: true, missed: null, missedDays: [], madeUp: null };
   const isToday = dateIso === realTodayIso;
   const date = parseLocalDate(dateIso);
   // Before the mesocycle starts nothing is scheduled.
@@ -228,8 +228,8 @@ function contextFor(dateIso, realTodayIso) {
   const move = workout ? undoableMove(meso, dateIso) : null;
   const madeUp = move && (move.shift ? { dateIso: move.shift.date, shifted: true } : { dateIso: move.workout.makeupFor, shifted: false });
   // Never both: the missed card and the "moved here / Undo" notice.
-  const missed = madeUp ? null : findMissedDay(meso, Store.getWorkouts(), dateIso, realTodayIso);
-  return { meso, dayTemplate, workout, dateIso, isToday, missed, madeUp };
+  const missedDays = madeUp ? [] : findMissedDays(meso, Store.getWorkouts(), dateIso, realTodayIso);
+  return { meso, dayTemplate, workout, dateIso, isToday, missed: missedDays[0] || null, missedDays, madeUp };
 }
 
 // The missed-day move on date X that undoMissedDay can still take back, as
@@ -247,33 +247,44 @@ function undoableMove(meso, dateIso) {
   return workout && workout.makeup ? { shift: null, workout } : null;
 }
 
-// The earliest training day missed right before the viewed date X, which can
-// still be done on X: nothing of this mesocycle is logged or finished on X or
-// later, and the scan back from X - 1 (at most MAX_MISSED_SCAN_DAYS) stops
-// at a gap day, a day with a logged or finished workout, or a day made up by
-// a logged or finished makeup. Earliest, so after two missed sessions the
-// first is resumed and the program keeps its order.
-export function findMissedDay(meso, workouts, dateIso, todayIso) {
-  if (dateIso < meso.startDate || dateIso > todayIso) return null;
+// The training days missed right before the viewed date X that can still be
+// done on X: nothing of this mesocycle is logged or finished on X or later,
+// and the scan back from X - 1 (at most MAX_MISSED_SCAN_DAYS) stops at a gap
+// day, a day with a logged or finished workout, or a day made up by a logged
+// or finished makeup. One entry per day template, at its earliest missed
+// date, earliest first: after a week off every day of the program is in the
+// list and the user picks which one to resume with. The first entry is the
+// default, so after two missed sessions the first is resumed and the program
+// keeps its order.
+export function findMissedDays(meso, workouts, dateIso, todayIso) {
+  if (dateIso < meso.startDate || dateIso > todayIso) return [];
   // A gap day of a shift: a new shift from here would leave X a rest day.
-  if (schedulePosition(meso, parseLocalDate(dateIso)).gap) return null;
+  if (schedulePosition(meso, parseLocalDate(dateIso)).gap) return [];
+  // Before a shift that is already there (a later day was picked and the
+  // days before it were skipped): a shift from here would start under that
+  // one, move the day it put on its date and take its Undo away.
+  if ((meso.shifts || []).some((s) => s.date > dateIso)) return [];
   const mine = workouts.filter((w) => w.mesocycleId === meso.id);
-  if (mine.some((w) => w.date >= dateIso && isUsed(w))) return null;
+  if (mine.some((w) => w.date >= dateIso && isUsed(w))) return [];
   const blocked = new Set();
   mine.filter(isUsed).forEach((w) => {
     blocked.add(w.date);
     if (w.makeupFor) blocked.add(w.makeupFor);
   });
   const x = parseLocalDate(dateIso);
-  let found = null;
+  const earliest = new Map(); // day id -> its missed date furthest back
   for (let n = 1; n <= MAX_MISSED_SCAN_DAYS; n++) {
     const d = addDays(x, -n);
     const iso = isoDate(d);
     if (iso < meso.startDate || blocked.has(iso) || schedulePosition(meso, d).gap) break;
     const dayTemplate = resolveDayForDate(meso, d);
-    if (dayTemplate) found = { dateIso: iso, dayTemplate };
+    if (dayTemplate) earliest.set(dayTemplate.id, { dateIso: iso, dayTemplate });
   }
-  return found;
+  return [...earliest.values()].sort((a, b) => (a.dateIso < b.dateIso ? -1 : 1));
+}
+
+export function findMissedDay(meso, workouts, dateIso, todayIso) {
+  return findMissedDays(meso, workouts, dateIso, todayIso)[0] || null;
 }
 
 const removeUntouchedFrom = (mesoId, fromIso) => Store.saveWorkouts(Store.getWorkouts()
@@ -282,10 +293,14 @@ const removeUntouchedFrom = (mesoId, fromIso) => Store.saveWorkouts(Store.getWor
 // Does the missed day M on the viewed date X. With `shift`, the rest of the
 // mesocycle moves out by the days between (X then trains M's day); without,
 // only this workout moves, which needs X to be a rest day. An untouched
-// makeup already made for M elsewhere is replaced. Returns the workout for
-// X, or null when nothing was done.
-export function doMissedDay(meso, dateIso, todayIso, shift) {
-  const missed = findMissedDay(meso, Store.getWorkouts(), dateIso, todayIso);
+// makeup already made for M elsewhere is replaced. M is the earliest missed
+// day, or the one of findMissedDays dated `pickIso` (a date that is not in
+// that list does nothing: the screen showed something else). With a later
+// pick and `shift`, the missed days before M stay behind as they are.
+// Returns the workout for X, or null when nothing was done.
+export function doMissedDay(meso, dateIso, todayIso, shift, pickIso = null) {
+  const choices = findMissedDays(meso, Store.getWorkouts(), dateIso, todayIso);
+  const missed = pickIso ? choices.find((m) => m.dateIso === pickIso) : choices[0];
   if (!missed) return null;
   if (!shift && resolveDayForDate(meso, parseLocalDate(dateIso))) return null;
   const all = Store.getWorkouts();
