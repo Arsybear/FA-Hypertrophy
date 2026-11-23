@@ -171,10 +171,16 @@ targets are at least 44px (`--tap`). Prediction placeholders are `--muted`
 at full opacity (above 4.5:1 on the input, and lighter in weight than a
 typed value); the outline of an empty control (unticked done circle, text
 box, select) is `--control-edge`, a neutral grey just above 3:1 on the card
-— `--muted` there made a column of empty circles louder than the numbers. The mark (a great helm whose face
-plate is the letters FA) is drawn by `scripts/make_icons.py`, which writes
-`icons/icon.svg`, `icons/mark.svg` and the PNG sizes; change the mark there
-and re-run it rather than editing the outputs.
+— `--muted` there made a column of empty circles louder than the numbers. The mark (a knight's helmet in
+black and white whose visor grill is the letters FA, with one accent: the
+right eye burns in mulberry, a near-white centre in the slit and a short
+ragged flame that ends just past the helmet's outline) is drawn by
+`scripts/make_icons.py`, which writes `icons/icon.svg`, `icons/mark.svg`
+and the PNG sizes; change the mark there and re-run it rather than editing
+the outputs. The mark is curves and strokes, so the script renders the PNGs
+from the SVG with headless Chrome or Edge (no Pillow). The flame's rims are
+its outline stroked outward; its five colours run from `#7c2457` at the rim
+through `--accent` to near white.
 
 ### Data model (`js/store.js`)
 
