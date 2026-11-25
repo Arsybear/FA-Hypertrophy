@@ -1,8 +1,8 @@
-"""Draws the app mark (an angular knight's helmet, black and white, with the
-letters FAR cut across its visor and its right eye burning in mulberry) and
-writes icons/icon.svg, icons/mark.svg and the PNG sizes the manifest and iOS
-need. The PNGs are the SVG rendered by headless Chrome or Edge (the mark is
-polygons, strokes and the flame's curves): python scripts/make_icons.py"""
+"""Draws the app mark (a knight's helmet whose visor grill is the letters FAR,
+black and white, its right eye burning in mulberry) and writes icons/icon.svg,
+icons/mark.svg and the PNG sizes the manifest and iOS need. The PNGs are the
+SVG rendered by headless Chrome or Edge (the mark is curves and strokes):
+python scripts/make_icons.py"""
 import os
 import pathlib
 import shutil
@@ -14,64 +14,51 @@ import tempfile
 BG, W, K = "#0b0d10", "#f1f3f6", "#0b0d10"
 DARK, MAIN, SOFT, HOT, WHITE = "#7c2457", "#b93a80", "#e57ab4", "#ffd3ea", "#fff7fb"   # the flame, rim to centre
 
+# ---- shell: the skull and the visor, nothing below the chin ----------------
+# The shapes are drawn in their own coordinates (outline y 37..436) and HELMET
+# centres them in the box and enlarges them by 1.215, as far as a circle of
+# radius 244 around the centre allows (the maskable icon's safe zone at the
+# PNGs' scale 0.82): the crest and the chin point end at radius 243.
+HELMET = "translate(256 256) scale(1.215) translate(-256 -236.5)"
+SKULL = "M256,48 C246,58 216,70 186,82 C144,100 129,140 130,212 C132,262 136,320 150,356 C172,392 212,414 256,428 C300,414 340,392 362,356 C376,320 380,262 382,212 C383,140 368,100 326,82 C296,70 266,58 256,48 Z"
+VISOR = "M256,168 C206,176 156,190 128,212 C122,220 116,230 116,242 C116,300 156,372 256,420 C356,372 396,300 396,242 C396,230 390,220 384,212 C356,190 306,176 256,168 Z"
+KEEL = "M256,56 L261.5,172 L250.5,172 Z"
+# centre ridge, outside the letter field only: from the visor's top into the
+# slit's dip, and from under the grill to the chin point
+RIDGES = ["M256,168 L259.5,239.6 L252.5,239.6 Z", "M256,418 L252,378 L260,378 Z"]
+RIVETS = [(135, 244), (377, 244)]
 
-def sym(right):
-    """A closed path symmetric about x=256 from its right half, top to bottom
-    (the first and last points lie on the centre line)."""
-    pts = right + [(512 - x, y) for x, y in reversed(right[1:-1])]
-    return "M" + " L".join(f"{x:g},{y:g}" for x, y in pts) + " Z"
+# ---- face: the eye slit and the grill, whose slots are the letters F A R ---
+# Drawn in its own coordinates and placed in the visor by FACE (slit 153..359,
+# clear of the rivets; its top corners on y 232). The grill is cut as the
+# first mark's was: round-ended slots 14 wide that hang from one line under
+# the slit and end along the chin's curve, so the F on the left is shorter
+# than the A in the middle, and the R's leg ends above its stem's foot. The
+# letters are slots of that grill, not a word set on the plate: a short slot
+# stands outside the F, one under the F's arms and one outside the R, as the
+# first grill had. The A stands on the centre seam, symmetric about x 256,
+# the ridge above it ending in the slit and the one below starting under it.
+# GRILL enlarges the grill about the middle of its top line: at the first
+# mark's size the letters were too small to read at 180 px in this larger
+# helmet.
+FACE = "translate(20.48 17.732) scale(0.92)"
+SLIT = "M144,242.7 L178,232.9 L256,239 L334,232.9 L368,242.7 L334,257.9 L256,264 L178,257.9 Z"
+GRILL = "translate(256 285) scale(1.15) translate(-256 -280.5)"
+SLOTS = ["M163,280.5 L163,300",                                                # a short slot, outside the F
+         "M185,347 L185,280.5 L216,280.5", "M185,308 L209,308",                # F
+         "M211,337 L211,360",                                                  # a short slot under the F's arms
+         "M233,366.4 L256,280.5 L279,366.4",                                   # A, on the seam
+         "M300,360 L300,280.5 L310,280.5 A16.5,16.5 0 0 1 310,313.5 L300,313.5",   # R: stem and bowl
+         "M309,313.5 L330,337",                                                # R: the leg
+         "M349,280.5 L349,300"]                                                # a short slot, outside the R
+A_BAR = "M243,333 L269,333 L272,343 L240,343 Z"              # low, or the A reads as a lambda
 
-
-def poly(pts):
-    return "M" + " L".join(f"{x:g},{y:g}" for x, y in pts) + " Z"
-
-
-# ---- shell: straight facets only, a broad dome and a chin point ------------
-# The skull is a broad dome of a few facets with a low crest point: a sharp
-# crest over straight sides made the whole mark read as a gem, not a helmet.
-# The visor, drawn over it, is one plate: from the brow, a V that dips toward
-# the nose so the helmet frowns, past the temples (the widest part), in a
-# little toward the jaw and down to the chin point, the lowest point of the
-# mark. Nothing below the chin (the earlier mark's neck plates read as a
-# collar).
-SKULL = sym([(256, 30), (314, 56), (360, 102), (390, 160), (402, 200), (406, 246), (396, 330), (320, 420), (256, 420)])
-VISOR = sym([(256, 222), (394, 174), (402, 200), (406, 246), (394, 368), (318, 432), (256, 482)])
-KEEL = "M256,40 L261,218 L251,218 Z"
-FACETS = ["M314,56 L350,188", "M198,56 L162,188"]           # the front planes of the dome
-JAW = ["M130.5,386 L256,414 L381.5,386"]                     # the jaw plate's edge, a V like the brow's
-RIVETS = [(391, 236), (121, 236)]                            # the visor's pivots: they say helmet, not mask
-# The centre seam: from the brow's dip into the A's flat top, and from under
-# the A to the chin point, so the seam runs through the A and splits it.
-RIDGES = ["M252,224 L260,224 L261,272 L251,272 Z", "M256,478 L251,418 L261,418 Z"]
-
-# ---- face: the sight and the letters F A R ---------------------------------
-# The sight is one dark V under the brow, the gap between skull and visor:
-# tall at the temples, lower at the nose, so the helmet glares. Two separate
-# eye wedges read as a mask. The letters are 21 wide with square ends,
-# 94 tall: F and the R's stem and bowl are strokes, the A (flat-topped, its
-# counter cut out, on the seam) and the R's leg are filled so their feet sit
-# flat on the line. The A's bar is low (without one it reads as a lambda); the
-# R's bowl is open and its leg starts at the bowl.
-EYES = [sym([(256, 224), (392, 177), (382, 211), (256, 243)])]
-# The A is on the seam and the R is wider than the F, so the F stands a little
-# further from the A: the word then sits evenly between the helmet's flanks.
-LETTERS_AT = "translate(0 5)"
-STROKES = ["M206,276.5 L156.5,276.5 L156.5,360", "M156.5,312.5 L196,312.5",                        # F
-           "M320.5,360 L320.5,276.5 L345,276.5 L356,287.5 L356,303.5 L345,314.5 L320.5,314.5"]     # R, stem and bowl
-FILLS = [poly([(251, 266), (261, 266), (298, 360), (275.43, 360), (270.32, 347), (241.68, 347), (236.57, 360), (214, 360)])
-         + " " + poly([(256, 310.63), (263.23, 329), (248.77, 329)]),                              # A and its counter
-         poly([(335, 314.5), (357, 314.5), (375, 360), (353, 360)])]                               # R, leg
-
-# ---- the burning right eye: the flame of the earlier, rounded mark ---------
-# The glow is so hot that it replaces the eye: a ragged flame that starts in
-# the right half of the sight, follows its slant, trails outward and up and
-# ends past the helmet's outline, with two ember slivers beyond the tip. It is
-# the one curved thing in the mark, fire against hard steel. FLAME is the
-# body's outline; the dark and the mulberry rim are FLAME stroked outward,
-# CORE lies about 3.5 inside it, CENTRE is the near-white heart at the root.
-# FLAME_AT places all of it at once: the root (275, 246.5) goes into the sight
-# a little out from the seam, so dark shows inboard of it, and the rims scale
-# with it.
+# ---- the burning right eye (helmet coordinates, drawn over the face) -------
+# Inside HELMET, so it moves and scales with the slit it sits in.
+# The glow is so hot that it replaces the eye: a near-white centre in the
+# slit, and a ragged flame that trails outward, clears the right rivet and
+# ends past the helmet's outline. FLAME is the body's outline; the dark and
+# the mulberry rim are FLAME stroked outward, CORE lies about 3.5 inside it.
 FLAME = ("M275,246.5 C281,237 291,232 303,231.6 C313,231.3 322,230.5 329,227 C335,224 340,219 343,212.5 "
          "C343.6,219 346,223.5 351.5,225 C361,223.5 370,216 375,205 C375.6,211.5 378,215.5 383,216.5 "
          "C392,214.5 400,207 405,196 C403,207 396,218 386,225.5 C376,232.5 364,238.5 350,243 "
@@ -83,7 +70,6 @@ CORE = ("M284,246.4 C289,240.5 296,236 304,235.7 C314,235.4 323,234.4 329.5,231.
 CENTRE = "M292,246.2 C297,241.6 304,239.3 313,239.4 C322,239.5 330,240 337,241.6 C330,247 319,250.4 308,250.5 C301,250.6 296,249 292,246.2 Z"
 EMBERS = ["M410,190.5 C411.5,187.4 414.4,185.3 417.6,184.8 C416,187.9 413.6,190.5 410,190.5 Z",
           "M420.5,180.5 C421.4,178.8 423,177.7 424.8,177.5 C423.9,179.2 422.5,180.4 420.5,180.5 Z"]
-FLAME_AT = "translate(308 220) rotate(4) scale(0.92) translate(-275 -246.5)"
 
 
 def paths(ds, attrs):
@@ -94,24 +80,25 @@ def mark():
     plate = 'stroke-width="7.5" stroke-linejoin="miter" stroke-miterlimit="6"'
     rim = lambda colour, body, ember: (paths([FLAME], f'fill="{colour}" stroke="{colour}" stroke-width="{body}" stroke-linejoin="round"')
                                        + paths(EMBERS, f'fill="{colour}" stroke="{colour}" stroke-width="{ember}" stroke-linejoin="round"'))
-    return '<g transform="translate(-4 0)">' + "".join([   # left a little, to balance the flame on the right
+    return "".join([
+        f'<g transform="{HELMET}">',
         paths([SKULL, VISOR], f'fill="{K}" stroke="{K}" stroke-width="16" stroke-linejoin="miter" stroke-miterlimit="3"'),   # the outer contour
         paths([SKULL], f'fill="{W}" stroke="{K}" {plate}'),
         paths([KEEL], f'fill="{K}"'),
-        paths(FACETS, f'fill="none" stroke="{K}" stroke-width="7"'),
         paths([VISOR], f'fill="{W}" stroke="{K}" {plate}'),
-        paths(JAW, f'fill="none" stroke="{K}" stroke-width="7"'),
-        paths(RIDGES + EYES, f'fill="{K}"'),
+        paths(RIDGES, f'fill="{K}"'),
         "".join(f'<circle cx="{x}" cy="{y}" r="7" fill="{K}"/>' for x, y in RIVETS),
-        f'<g transform="{LETTERS_AT}">',
-        paths(STROKES, f'fill="none" stroke="{K}" stroke-width="21" stroke-linejoin="miter" stroke-miterlimit="4"'),
-        paths(FILLS, f'fill="{K}" fill-rule="evenodd"'),
+        f'<g transform="{FACE}">',
+        paths([SLIT], f'fill="{K}"'),
+        f'<g transform="{GRILL}">',
+        paths([A_BAR], f'fill="{K}"'),
+        paths(SLOTS, f'fill="none" stroke="{K}" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"'),
         "</g>",
-        f'<g transform="{FLAME_AT}">',
+        "</g>",
         rim(DARK, 10, 5), rim(MAIN, 5, 2.4),
         paths([FLAME] + EMBERS, f'fill="{SOFT}"'), paths([CORE], f'fill="{HOT}"'), paths([CENTRE], f'fill="{WHITE}"'),
         "</g>",
-    ]) + "</g>"
+    ])
 
 
 def svg(background, scale=1.0):

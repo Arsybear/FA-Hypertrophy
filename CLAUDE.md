@@ -205,27 +205,34 @@ at full opacity (above 4.5:1 on the input, and lighter in weight than a
 typed value); the outline of an empty control (unticked done circle, text
 box, select) is `--control-edge`, a neutral grey just above 3:1 on the card
 — `--muted` there made a column of empty circles louder than the numbers. The mark (a knight's helmet in
-black and white, drawn from straight facets: a broad dome, a V-shaped sight
-that frowns, the letters FAR cut across the visor with the A on the centre
-seam, a jaw plate and a chin point, with one accent: the right eye burns in
-mulberry, a ragged flame that starts in the right half of the sight and ends
-past the helmet's outline) is drawn by
+black and white whose visor grill is the letters FAR, with one accent: the
+right eye burns in mulberry, a near-white centre in the slit and a short
+ragged flame that ends just past the helmet's outline) is drawn by
 `scripts/make_icons.py`, which writes `icons/icon.svg`, `icons/mark.svg`
 and the PNG sizes; change the mark there and re-run it rather than editing
-the outputs. The mark is polygons, strokes and the flame's curves, so the script renders the PNGs
+the outputs. The mark is curves and strokes, so the script renders the PNGs
 from the SVG with headless Chrome or Edge (no Pillow). The flame's rims are
 its outline stroked outward; its five colours run from `#7c2457` at the rim
-through `--accent` to near white. Version 42 redrew it for the new name (the
-user: "change the plate to read FAR", "Remove elements below the actual
-helmet", "potentially pivot it a more angular and aggressive angle"): the
-two neck plates are gone and nothing lies below the chin. What the drawing
-rounds taught, so they are not tried again: a sharp crest over straight
-flanks reads as a gem, two separate eye wedges read as a mask (one V sight
-with a rivet at each visor pivot reads as a helmet), a second colour or a
-dark half of the helmet vanishes into the icon's background at 180 px, and
-the letters need strokes about 21 wide to read at that size. Two other
-drawings (the old rounded helmet with FAR, and one with counterchanged
-halves) are kept as scripts in the git-ignored `wip-icon/far/`.
+through `--accent` to near white. It is the first mark's rounded helmet
+redrawn for the new name (the user: "change the plate to read FAR", "Remove
+elements below the actual helmet"): the two neck plates are gone, nothing
+lies below the chin, and the helmet is enlarged into the room they left.
+The letters are slots of the grill, cut as the first mark's F and A were
+(the user, on seeing FAR set as a plain word: "integrate the lettering into
+the grille in a similar manner to old"): round-ended slots that hang from
+one line under the eye slit and end along the chin's curve, so the F is
+shorter than the A and the R's leg ends above its stem's foot, with a short
+slot outside the F, one under its arms and one outside the R. The A stands
+on the centre seam (the user: "splitting the a between the left and right
+halves"). A reader with no brief can take the two outer slots for an I
+("IFARI"); they are kept because they are the grill, and the same drawing
+without the three short slots is kept beside it. The user turned down an
+angular redraw (version 42's, straight facets: "Option A"); it, the same
+helmet with FAR as a plain word, one with counterchanged halves and the
+letters-only grill are scripts in the git-ignored `wip-icon/far/`. What
+those rounds taught: a sharp crest over straight flanks reads as a gem, two
+separate eye wedges as a mask, and a dark half of the helmet vanishes into
+the icon's background at 180 px.
 
 ### Data model (`js/store.js`)
 
