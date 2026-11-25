@@ -46,12 +46,23 @@ export function mesocycleStartWeekday(mesocycle) {
   return jsDateToWeekdayIndex(parseLocalDate(mesocycle.startDate));
 }
 
-// A day template's weekday offset (0 = the mesocycle's start weekday, 1 =
-// the next day, ... wrapping at 7) is what pins it to a specific weekday,
-// allowing gaps (rest days) between training days. Mesocycles created
-// before this field existed only ever had days packed consecutively from
-// offset 0 in `order`, so `order` is exactly the right fallback — no data
-// migration needed.
+// A program repeats after this many days: 7 is a weekly program (the default,
+// and what a mesocycle without the field has), any other length from 1 to
+// MAX_CYCLE a rotation that runs on without following the weekdays (6 days,
+// 8 days). Anything else stored there reads as 7.
+export const MAX_CYCLE = 14;
+export function cycleLength(meso) {
+  const n = meso.cycleLength;
+  return Number.isInteger(n) && n >= 1 && n <= MAX_CYCLE ? n : 7;
+}
+
+// A day template's offset in the cycle (0 = the mesocycle's start date, 1 =
+// the next day, ... wrapping at the cycle's length) is what pins it to its
+// days, allowing gaps (rest days) between training days. In a weekly program
+// that is a weekday, hence the field's name. Mesocycles created before this
+// field existed only ever had days packed consecutively from offset 0 in
+// `order`, so `order` is exactly the right fallback — no data migration
+// needed.
 export function getDayWeekdayOffset(day) {
   return day.weekdayOffset ?? day.order ?? 0;
 }
@@ -81,17 +92,39 @@ export function schedulePosition(meso, date) {
   return { date: addDays(date, -back), gap: false };
 }
 
+// The offset in the cycle that `date` holds (0 on the start date and every
+// cycle's length after it, counted on the unshifted calendar), or null on a
+// shift's gap day. In a 7-day cycle this is the weekday counted from the
+// start weekday.
+export function cycleOffset(meso, date) {
+  const position = schedulePosition(meso, date);
+  if (position.gap) return null;
+  const length = cycleLength(meso);
+  // A date before the start gives a negative count: keep the result in 0..length-1.
+  return ((daysBetween(parseLocalDate(meso.startDate), position.date) % length) + length) % length;
+}
+
 // Resolve which day template (if any) trains on `date`, given a mesocycle's
-// startDate (whose weekday anchors offset 0), its shifts, and each day's own
-// weekdayOffset. Returns the day template object, or null if `date` is a
-// rest day (no day template claims that offset, or a shift's gap day).
+// startDate (which anchors offset 0), its cycle length, its shifts, and each
+// day's own weekdayOffset. Returns the day template object, or null if `date`
+// is a rest day (no day template claims that offset, or a shift's gap day).
 export function resolveDayForDate(mesocycle, date) {
   if (!mesocycle || !mesocycle.days || mesocycle.days.length === 0) return null;
-  const position = schedulePosition(mesocycle, date);
-  if (position.gap) return null;
-  const weekday = jsDateToWeekdayIndex(position.date);
-  const offset = (weekday - mesocycleStartWeekday(mesocycle) + 7) % 7;
+  const offset = cycleOffset(mesocycle, date);
+  if (offset == null) return null;
   return mesocycle.days.find((d) => getDayWeekdayOffset(d) === offset) || null;
+}
+
+// The first date from `fromIso` on, and not before the start date, that
+// holds this offset of the cycle; null for an offset the cycle does not have.
+export function nextDateOfOffset(meso, offset, fromIso) {
+  let date = parseLocalDate(fromIso < meso.startDate ? meso.startDate : fromIso);
+  // Gap days hold no offset, so look one cycle and every gap day ahead.
+  for (let left = cycleLength(meso) + totalShiftDays(meso); left >= 0; left--) {
+    if (cycleOffset(meso, date) === offset) return isoDate(date);
+    date = addDays(date, 1);
+  }
+  return null;
 }
 
 export function weekNumber(meso, date) {
@@ -108,6 +141,8 @@ export function plannedEndIso(meso) {
 }
 
 // The weekday (0 = Monday) a day template with this offset trains on now.
+// Only a 7-day cycle keeps a day on one weekday: for any other length use
+// nextDateOfOffset.
 export function offsetWeekday(meso, offset) {
   return (mesocycleStartWeekday(meso) + offset + totalShiftDays(meso)) % 7;
 }

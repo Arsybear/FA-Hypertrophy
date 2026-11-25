@@ -206,35 +206,37 @@ const missedHint = (days) => `Later workouts move ${plural(days, "day")}. Untick
 
 // Training days before the viewed date with nothing logged (findMissedDays):
 // do one on the viewed date, either alone (a makeup on a rest day) or by
-// shifting every later workout along. With more than one day of the program
-// missed (a week off) a select names them and the user picks which one to
-// resume with; the earliest is the default. The select and the checkbox are
-// read when the button is pressed, like the scope radios.
+// shifting every later workout along. With two or more days of the program
+// missed (a week off) the card is "Pick back up from": a select names them
+// and the user picks which one to resume with, the earliest by default. The
+// picked day is a start point, so there the shift starts ticked (on a rest
+// day it can be unticked for a one-off makeup). The select and the checkbox
+// are read when the button is pressed, like the scope radios.
 function renderMissedCard(meso, missedDays, dateIso, isToday) {
   if (missedDays.length === 0) return "";
   const picked = missedDays.find((m) => m.dateIso === App.ui.missedPick) || missedDays[0];
   const days = (m) => daysBetween(parseLocalDate(m.dateIso), parseLocalDate(dateIso));
   const forced = !!resolveDayForDate(meso, parseLocalDate(dateIso));
-  const head = missedDays.length === 1
+  const several = missedDays.length > 1;
+  const head = !several
     ? `<p class="missed-title">Missed: ${escapeHtml(picked.dayTemplate.name)}</p>
     <p class="muted">${formatDay(picked.dateIso)}</p>`
-    : `<p class="missed-title">Missed workouts</p>
-    <label>Day to do
+    : `<label class="missed-title">Pick back up from
       <select data-role="missed-pick">
         ${missedDays.map((m) => `<option value="${m.dateIso}" data-days="${days(m)}" ${m === picked ? "selected" : ""}>${escapeHtml(m.dayTemplate.name)} · ${formatDay(m.dateIso)}</option>`).join("")}
       </select>
     </label>`;
   return `<div class="card missed-card">
     ${head}
-    <label class="check-row"><input type="checkbox" data-role="missed-shift" ${forced ? "checked disabled" : ""}> Shift mesocycle to fit</label>
+    <label class="check-row"><input type="checkbox" data-role="missed-shift" ${forced ? "checked disabled" : several ? "checked" : ""}> Shift mesocycle to fit</label>
     <p class="muted hint" data-role="missed-hint">${forced ? "This day already has a workout, so later workouts must move." : missedHint(days(picked))}</p>
     <button class="btn primary wide" data-action="do-missed">${isToday ? "Do it today" : `Do it on ${formatShortDate(dateIso)}`}</button>
   </div>`;
 }
 
 // Another missed day picked: how far the later workouts move depends on it.
-// The hint is patched in place (a re-render would untick the checkbox), and
-// the pick is kept for the next render.
+// The hint is patched in place (a re-render would put the checkbox back to
+// its default), and the pick is kept for the next render.
 export function handleMissedPick(select) {
   App.ui.missedPick = select.value;
   const card = select.closest(".missed-card");

@@ -1,20 +1,31 @@
 import { Store, cleanCount } from "../store.js";
-import { WEEKDAY_LABELS, formatDay, getDayWeekdayOffset, offsetWeekday, totalShiftDays } from "../schedule.js";
+import { WEEKDAY_LABELS, cycleLength, formatDay, getDayWeekdayOffset, isoDate, nextDateOfOffset, offsetWeekday, totalShiftDays } from "../schedule.js";
 import { PROGRESSIONS, progressionOf } from "../progression.js";
 import { refreshPredictions } from "../workout.js";
 import { App, PRESET_HELP, cssEscape, emptyMesoState, escapeHtml, getExerciseMuscleGroup, icon, pageHeader, plural, renderCurrentView, renderExerciseOptionsGrouped, renderFormError, renderMinStepInput, renderMuscleGroupSelect, renderMuscleTag, renderProgressionSelect } from "../ui.js";
 
+// Where a day of the cycle falls: its weekday in a weekly program; in any
+// other cycle its place in the cycle and the next date it comes round.
+function cycleDayLabel(meso, offset) {
+  const length = cycleLength(meso);
+  if (length === 7) return WEEKDAY_LABELS[offsetWeekday(meso, offset)];
+  const today = isoDate(new Date());
+  const next = nextDateOfOffset(meso, offset, today);
+  return `Day ${offset + 1} of ${length}${next ? ` · ${next === today ? "today" : `next ${formatDay(next)}`}` : ""}`;
+}
+
 export function renderProgram(container) {
   const meso = Store.getActiveMesocycle();
   if (!meso) { container.innerHTML = emptyMesoState(); return; }
+  const length = cycleLength(meso);
   const sortedDays = [...meso.days].sort((a, b) => getDayWeekdayOffset(a) - getDayWeekdayOffset(b));
   const usedOffsets = new Set(meso.days.map((d) => getDayWeekdayOffset(d)));
-  const availableOffsets = [0, 1, 2, 3, 4, 5, 6].filter((i) => !usedOffsets.has(i));
+  const availableOffsets = Array.from({ length }, (_, i) => i).filter((i) => !usedOffsets.has(i));
 
   const shifted = totalShiftDays(meso);
   container.innerHTML = `
-    ${pageHeader(meso.name, [plural(meso.numWeeks, "week"), `starts ${formatDay(meso.startDate)}`, shifted > 0 && `shifted ${plural(shifted, "day")}`])}
-    ${sortedDays.length === 0 ? `<p class="muted intro">Add the days you train. Each day holds its exercises and repeats every week.</p>` : ""}
+    ${pageHeader(meso.name, [plural(meso.numWeeks, "week"), length !== 7 && `${length}-day cycle`, `starts ${formatDay(meso.startDate)}`, shifted > 0 && `shifted ${plural(shifted, "day")}`])}
+    ${sortedDays.length === 0 ? `<p class="muted intro">Add the days you train. Each day holds its exercises and repeats every ${length === 7 ? "week" : length === 1 ? "day" : `${length} days`}.</p>` : ""}
     ${sortedDays.some((d) => d.exercises.length > 0) ? `<details class="preset-explainer"><summary>What do the progression choices mean?</summary>${PRESET_HELP}${PRESET_DETAIL}</details>` : ""}
     ${sortedDays.map((day) => renderDayCard(meso, day)).join("")}
     <div class="add-exercise-area">
@@ -25,7 +36,7 @@ export function renderProgram(container) {
              <input type="text" data-role="new-day-name" placeholder="Day name (e.g. Push)" aria-label="Day name">
              <label>Trains on
                <select data-role="new-day-weekday">
-                 ${availableOffsets.map((i) => `<option value="${i}">${WEEKDAY_LABELS[offsetWeekday(meso, i)]}</option>`).join("")}
+                 ${availableOffsets.map((i) => `<option value="${i}">${cycleDayLabel(meso, i)}</option>`).join("")}
                </select>
              </label>
              <div class="form-actions">
@@ -34,14 +45,14 @@ export function renderProgram(container) {
              </div>
            </div>`
         : availableOffsets.length === 0
-          ? `<p class="muted">No more days can be added — every weekday is already scheduled.</p>`
+          ? `<p class="muted">No more days can be added — every ${length === 7 ? "weekday" : "day of the cycle"} is already scheduled.</p>`
           : `<button class="btn ghost wide" data-action="open-add-day">${icon("plus")} Add day</button>`}
     </div>
   `;
 }
 
 export function renderDayCard(meso, day) {
-  const weekday = WEEKDAY_LABELS[offsetWeekday(meso, getDayWeekdayOffset(day))];
+  const weekday = cycleDayLabel(meso, getDayWeekdayOffset(day));
   const sortedExercises = [...day.exercises].sort((a, b) => a.order - b.order);
   const removeConfirm = App.ui.removeDayConfirm === day.id;
   const addExOpen = App.ui.addExerciseToDay === day.id;

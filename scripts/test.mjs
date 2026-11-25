@@ -1448,6 +1448,134 @@ assert.deepStrictEqual(missedOn(cmeso, [], "2026-11-18", "2026-11-18"), ["2026-1
 assert.strictEqual(doMissedDay(cmeso, "2026-11-18", "2026-11-18", true).dayName, "Mon-A");
 assert.deepStrictEqual(weekFrom("2026-11-16", 10), ["rest", "rest", "Mon-A", "Tue-B", "Wed-C", "Thu-D", "Fri-E", "rest", "rest", "Mon-A"]);
 
+// --- Cycle length: programs that do not span a week (6 days, 8 days) ---
+const { cycleLength, cycleOffset, getDayWeekdayOffset, jsDateToWeekdayIndex, mesocycleStartWeekday, nextDateOfOffset, schedulePosition } = await import("../js/schedule.js");
+const { cleanCycleLength } = await import("../js/store.js");
+// A mesocycle without cycleLength (every one made before the field) resolves
+// exactly as the weekly rule did; that rule is kept here as the oracle.
+const weeklyRule = (meso, date) => {
+  const position = schedulePosition(meso, date);
+  if (position.gap) return null;
+  const offset = (jsDateToWeekdayIndex(position.date) - mesocycleStartWeekday(meso) + 7) % 7;
+  return meso.days.find((d) => getDayWeekdayOffset(d) === offset) || null;
+};
+for (const meso of [
+  mwf(), // Mon/Wed/Fri from Mon 2026-11-02
+  mwf({ startDate: "2026-03-05" }), // a Thursday start; both clock changes lie inside the sweep
+  mwf({ shifts: [{ date: "2026-11-09", days: 1 }, { date: "2026-12-01", days: 5 }] }),
+  mwf({ days: [{ id: "a", name: "A", order: 0, exercises: [] }, { id: "b", name: "B", order: 1, exercises: [] }] }), // days placed by the old `order`
+  mwf({ cycleLength: 7 }), // 7 written out is the same program
+  mwf({ cycleLength: 0 }), mwf({ cycleLength: 15 }), mwf({ cycleLength: 6.5 }), mwf({ cycleLength: "8" }), // not a length: weekly
+]) {
+  assert.strictEqual(cycleLength(meso), 7);
+  for (let i = -400; i <= 400; i++) {
+    const date = addDays(parseLocalDate(meso.startDate), i);
+    assert.strictEqual(resolveDayForDate(meso, date), weeklyRule(meso, date), `${meso.startDate} ${isoDate(date)}`);
+  }
+}
+
+// An 8-day rotation from Mon 11-02: A B - C D E - -, then A again on Tue 11-10.
+const eightDays = () => [
+  { id: "A", name: "Upper", weekdayOffset: 0, exercises: [slot("s1", "bench", 0)] },
+  { id: "B", name: "Lower", weekdayOffset: 1, exercises: [slot("s2", "row", 0)] },
+  { id: "C", name: "Push", weekdayOffset: 3, exercises: [slot("s3", "bench", 0)] },
+  { id: "D", name: "Pull", weekdayOffset: 4, exercises: [slot("s4", "row", 0)] },
+  { id: "E", name: "Legs", weekdayOffset: 5, exercises: [slot("s5", "curl", 0)] },
+];
+const eight = mwf({ cycleLength: 8, days: eightDays() });
+assert.strictEqual(cycleLength(eight), 8);
+assert.deepStrictEqual(daysOn(eight, "2026-11-02", 18), ["A", "B", null, "C", "D", "E", null, null, "A", "B", null, "C", "D", "E", null, null, "A", "B"]);
+assert.deepStrictEqual(["2026-11-02", "2026-11-09", "2026-11-10", "2026-10-25", "2026-11-01"].map((d) => cycleOffset(eight, parseLocalDate(d))), [0, 7, 0, 0, 7]); // before the start it still counts in 0..7
+// The weeks stay calendar weeks from the start: the header and the planned end do not follow the cycle.
+assert.deepStrictEqual([weekNumber(eight, parseLocalDate("2026-11-08")), weekNumber(eight, parseLocalDate("2026-11-10")), plannedEndIso(eight)], [1, 2, "2026-11-29"]);
+// Where a day of the cycle comes round next (Program's label off a weekly program).
+assert.deepStrictEqual([nextDateOfOffset(eight, 3, "2026-11-10"), nextDateOfOffset(eight, 0, "2026-11-10"), nextDateOfOffset(eight, 1, "2026-10-01"), nextDateOfOffset(eight, 8, "2026-11-10")],
+  ["2026-11-13", "2026-11-10", "2026-11-03", null]);
+// Missed, picked, shifted, undone. A and B done; C, D, E, A and B missed; opened on rest day Thu 11-12.
+const seedEight = () => {
+  memory.clear();
+  localStorage.setItem("fah_exercises", JSON.stringify([{ id: "bench", name: "Bench" }, { id: "row", name: "Row" }, { id: "curl", name: "Curl" }]));
+  localStorage.setItem("fah_mesocycles", JSON.stringify([eight]));
+  localStorage.setItem("fah_workouts", JSON.stringify([fixedWorkout("2026-11-02", "A", { finished: true, touched: true }), fixedWorkout("2026-11-03", "B", { finished: true, touched: true })]));
+};
+seedEight();
+const beforeEight = snapshot();
+assert.deepStrictEqual(picks("2026-11-12"), [["2026-11-05", "C"], ["2026-11-06", "D"], ["2026-11-07", "E"], ["2026-11-10", "A"], ["2026-11-11", "B"]]);
+made = doMissedDay(activeMeso(), "2026-11-12", "2026-11-12", true, "2026-11-06"); // pick back up from Pull
+assert.deepStrictEqual([made.date, made.dayId], ["2026-11-12", "D"]);
+assert.deepStrictEqual(activeMeso().shifts, [{ date: "2026-11-06", days: 6 }]);
+assert.deepStrictEqual(daysOn(activeMeso(), "2026-11-05", 14), ["C", null, null, null, null, null, null, "D", "E", null, null, "A", "B", null]);
+assert.strictEqual(nextDateOfOffset(activeMeso(), 4, "2026-11-07"), "2026-11-12"); // gap days hold no day of the cycle
+assert.strictEqual(validateBackup(JSON.parse(JSON.stringify(Store.exportBackup()))), null);
+assert.strictEqual(undoMissedDay(activeMeso(), "2026-11-12"), true);
+assert.deepStrictEqual(snapshot(), beforeEight);
+made = doMissedDay(activeMeso(), "2026-11-12", "2026-11-12", false, "2026-11-10"); // unticked on a rest day: a makeup
+assert.deepStrictEqual([made.dayId, made.makeup, made.makeupFor, "shifts" in activeMeso()], ["A", true, "2026-11-10", false]);
+assert.strictEqual(undoMissedDay(activeMeso(), "2026-11-12"), true);
+assert.deepStrictEqual(snapshot(), beforeEight);
+// A copy keeps the cycle and starts on a cycle boundary after the planned
+// weeks (4 weeks are 28 days: 4 cycles of 8 end after 32), so the rotation
+// goes on in order; then on by whole cycles until it is not before today.
+let cycleCopy = Store.cloneMesocycle("m", "2026-10-10");
+assert.deepStrictEqual([cycleCopy.cycleLength, cycleCopy.startDate, cycleOffset(eight, parseLocalDate(cycleCopy.startDate))], [8, "2026-12-04", 0]);
+assert.strictEqual(Store.cloneMesocycle("m", "2026-12-05").startDate, "2026-12-12");
+assert.strictEqual(validateBackup(JSON.parse(JSON.stringify(Store.exportBackup()))), null);
+
+// A 6-day rotation with no rest day: a missed day can only be done by a shift.
+const six = mwf({ cycleLength: 6, days: ["d0", "d1", "d2", "d3", "d4", "d5"].map((id, i) => ({ id, name: id, weekdayOffset: i, exercises: [slot(`s${i}`, "bench", 0)] })) });
+assert.deepStrictEqual(daysOn(six, "2026-11-02", 8), ["d0", "d1", "d2", "d3", "d4", "d5", "d0", "d1"]);
+memory.clear();
+localStorage.setItem("fah_exercises", JSON.stringify([{ id: "bench", name: "Bench" }]));
+localStorage.setItem("fah_mesocycles", JSON.stringify([six]));
+// Mon 11-02 logged at 100x10 and finished; d1 and d2 missed; opened Thu 11-05 (d3's day).
+const sixFirst = generateWorkout(activeMeso(), activeMeso().days[0], "2026-11-02");
+Store.updateWorkout(sixFirst.id, { exercises: [{ ...sixFirst.exercises[0], sets: [logged(0, 100, 10), logged(1, 100, 10)] }] });
+Store.finishWorkout(sixFirst.id);
+const beforeSix = snapshot();
+assert.deepStrictEqual(picks("2026-11-05"), [["2026-11-03", "d1"], ["2026-11-04", "d2"]]);
+assert.strictEqual(doMissedDay(activeMeso(), "2026-11-05", "2026-11-05", false, "2026-11-04"), null); // unticked on a training day: refused
+made = doMissedDay(activeMeso(), "2026-11-05", "2026-11-05", true, "2026-11-04");
+assert.deepStrictEqual([made.dayId, activeMeso().shifts], ["d2", [{ date: "2026-11-04", days: 1 }]]);
+assert.deepStrictEqual(daysOn(activeMeso(), "2026-11-03", 6), ["d1", null, "d2", "d3", "d4", "d5"]);
+assert.strictEqual(undoMissedDay(activeMeso(), "2026-11-05"), true);
+assert.deepStrictEqual(snapshot(), beforeSix);
+// The pace is counted in calendar weeks whatever the cycle: d0 comes round
+// again on Sun 11-08, in the week of its own log, and gets no units (the same
+// set again); on Sat 11-14, a week later, Moderate asks its rep.
+const targets = (iso) => generateWorkout(activeMeso(), activeMeso().days[0], iso).exercises[0].sets.map((st) => `${st.baseWeight}x${st.baseReps}`);
+assert.deepStrictEqual([weekOf("2026-11-08") === weekOf("2026-11-02"), targets("2026-11-08"), targets("2026-11-14")], [true, ["100x10", "100x10"], ["100x11", "100x11"]]);
+
+// The length itself: 1 to 14 whole days, never shorter than the days placed in it; not a number is 7.
+assert.deepStrictEqual([8, "6", 0, -3, 99, "x", 2.9, null].map((v) => cleanCycleLength(v)), [8, 6, 1, 1, 14, 7, 2, 1]);
+assert.deepStrictEqual([cleanCycleLength(3, eightDays()), cleanCycleLength(1, [{ order: 4 }]), cleanCycleLength(9, eightDays()), cleanCycleLength(8, [{ order: 8.5 }])], [6, 5, 9, 10]);
+memory.clear();
+assert.strictEqual("cycleLength" in Store.createMesocycle({ name: "W", numWeeks: 4, startDate: "2026-11-02" }), false); // a weekly program is stored as before
+assert.strictEqual("cycleLength" in Store.createMesocycle({ name: "W7", numWeeks: 4, startDate: "2026-11-02", cycleLength: "7" }), false);
+const rotation = Store.createMesocycle({ name: "R", numWeeks: 4, startDate: "2026-11-02", cycleLength: "8" });
+assert.strictEqual(rotation.cycleLength, 8);
+Store.addDay(rotation.id, "Late", 5);
+assert.strictEqual(Store.updateMesocycle(rotation.id, { cycleLength: "3" }).cycleLength, 6); // day 6 holds a workout
+assert.strictEqual(Store.updateMesocycle(rotation.id, { cycleLength: 40 }).cycleLength, 14);
+assert.strictEqual(Store.updateMesocycle(rotation.id, { name: "R2" }).cycleLength, 14); // another edit leaves it alone
+// A backup: a day's offset has to fit a cycle (0-6 with no cycleLength, 0-13
+// with one), the length only has to be a number and is brought into range,
+// and lengthened to hold its days, when the backup is imported.
+const backupOf = (m) => ({ app: "fa-hypertrophy", version: 1, exercises: [], workouts: [], mesocycles: [m] });
+const dayAt = (weekdayOffset) => [{ id: "d", name: "D", weekdayOffset, exercises: [] }];
+assert.deepStrictEqual([
+  validateBackup(backupOf(mwf({ cycleLength: 8, days: dayAt(7) }))), validateBackup(backupOf(mwf({ cycleLength: 8, days: dayAt(13) }))),
+  validateBackup(backupOf(mwf({ cycleLength: 99, days: dayAt(2) }))),
+].map((error) => error === null), [true, true, true]);
+assert.deepStrictEqual([
+  validateBackup(backupOf(mwf({ days: dayAt(7) }))), validateBackup(backupOf(mwf({ cycleLength: 8, days: dayAt(14) }))),
+  validateBackup(backupOf(mwf({ cycleLength: "8", days: dayAt(0) }))), validateBackup(backupOf(mwf({ cycleLength: 8, days: dayAt(1.5) }))),
+].map((error) => typeof error), ["string", "string", "string", "string"]);
+const loose = [mwf({ cycleLength: 99, days: dayAt(2) }), mwf({ cycleLength: 3, days: dayAt(5) }), mwf({ cycleLength: 8.7, days: dayAt(0) }), mwf()];
+assert.strictEqual(normalizeMesocycles(loose), true);
+assert.deepStrictEqual(loose.map((m) => m.cycleLength), [14, 6, 8, undefined]);
+assert.strictEqual(Store.importBackup(backupOf(mwf({ cycleLength: 3, days: dayAt(5) }))), true);
+assert.strictEqual(Store.getMesocycles()[0].cycleLength, 6);
+
 // The version shown in Settings is the service worker cache version.
 assert.ok(fs.readFileSync(path.join(root, "sw.js"), "utf8").includes(`"fa-hypertrophy-v${APP_VERSION}"`), "APP_VERSION and CACHE_NAME differ");
 

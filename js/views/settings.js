@@ -1,17 +1,21 @@
 import { APP_VERSION } from "../version.js";
-import { Store, cleanCount, validateBackup } from "../store.js";
-import { WEEKDAY_LABELS, formatDay, isIsoDate, isoDate, jsDateToWeekdayIndex, mesocycleStartWeekday, parseLocalDate } from "../schedule.js";
+import { Store, cleanCount, cleanCycleLength, validateBackup } from "../store.js";
+import { MAX_CYCLE, WEEKDAY_LABELS, cycleLength, formatDay, isIsoDate, isoDate, jsDateToWeekdayIndex, mesocycleStartWeekday, parseLocalDate } from "../schedule.js";
 import { App, escapeHtml, icon, metaLine, pageHeader, plural, renderCurrentView, renderFormError, renderMinStepInput, renderMuscleGroupSelect, renderMuscleTag } from "../ui.js";
 import { refreshPredictions } from "../workout.js";
 
 // One line under a mesocycle's name in the list (HTML, see metaLine).
 function mesoSummary(m) {
-  return metaLine([plural(m.numWeeks, "week"), `starts ${formatDay(m.startDate)}`]);
+  return metaLine([plural(m.numWeeks, "week"), cycleLength(m) !== 7 && `${cycleLength(m)}-day cycle`, `starts ${formatDay(m.startDate)}`]);
 }
+
+const CYCLE_HELP = "Days until the program repeats. 7 is a weekly program; 6 or 8 is a rotation that does not follow the weekdays.";
 
 export function renderSettings(container) {
   const mesos = Store.getMesocycles().sort((a, b) => (a.startDate < b.startDate ? 1 : -1));
   const active = mesos.find((m) => m.active);
+  // The shortest cycle the active mesocycle's days fit in.
+  const shortest = active ? cleanCycleLength(1, active.days) : 1;
   const exercises = Store.getExercises().sort((a, b) => a.name.localeCompare(b.name));
   // An exercise a program still uses can't be removed: its slots would turn
   // into "(unknown exercise)". Take it out of the program first.
@@ -47,8 +51,10 @@ export function renderSettings(container) {
       <div class="card">
         <label>Name <input type="text" data-role="edit-name" value="${escapeHtml(active.name)}"></label>
         <label>Weeks <input type="number" inputmode="numeric" min="1" max="99" data-role="edit-weeks" value="${active.numWeeks}"></label>
+        <label>Cycle length (days) <input type="number" inputmode="numeric" min="${shortest}" max="${MAX_CYCLE}" data-role="edit-cycle" value="${cycleLength(active)}"></label>
+        <p class="muted hint">${CYCLE_HELP}${shortest > 1 ? ` Not below ${shortest}: day ${shortest} of the cycle has a workout.` : ""}</p>
         <label>Start date <input type="date" data-role="edit-start-date" value="${active.startDate}"></label>
-        <p class="muted">Falls on a <span data-role="edit-start-weekday-hint">${WEEKDAY_LABELS[mesocycleStartWeekday(active)]}</span> — day 1 of the program always starts there.</p>
+        <p class="muted">Falls on a <span data-role="edit-start-weekday-hint">${WEEKDAY_LABELS[mesocycleStartWeekday(active)]}</span>. Day 1 of the program is on this date.</p>
       </div>
     ` : ""}
 
@@ -56,8 +62,10 @@ export function renderSettings(container) {
     <div class="card">
       <label>Name <input type="text" data-role="new-meso-name" placeholder="e.g. Meso 1"></label>
       <label>Weeks <input type="number" inputmode="numeric" min="1" max="99" value="6" data-role="new-meso-weeks"></label>
+      <label>Cycle length (days) <input type="number" inputmode="numeric" min="1" max="${MAX_CYCLE}" value="7" data-role="new-meso-cycle"></label>
+      <p class="muted hint">${CYCLE_HELP}</p>
       <label>Start date <input type="date" data-role="new-meso-start-date" value="${isoDate(new Date())}"></label>
-      <p class="muted">Falls on a <span data-role="new-meso-start-weekday-hint">${WEEKDAY_LABELS[jsDateToWeekdayIndex(new Date())]}</span> — day 1 of the program always starts there.</p>
+      <p class="muted">Falls on a <span data-role="new-meso-start-weekday-hint">${WEEKDAY_LABELS[jsDateToWeekdayIndex(new Date())]}</span>. Day 1 of the program is on this date.</p>
       <button class="btn primary wide" data-action="create-meso">Create mesocycle</button>
     </div>
 
@@ -102,7 +110,7 @@ export function renderSettings(container) {
           </div>`).join("")}
       </div>
     `}
-    <p class="about muted">FA Hypertrophy · version ${APP_VERSION}</p>
+    <p class="about muted">FAR Hypertrophy · version ${APP_VERSION}</p>
   `;
 }
 
@@ -140,7 +148,7 @@ function backupDate(backup) {
 // download, so where the share sheet takes files that is used instead
 // ("Save to Files").
 async function exportBackup() {
-  const name = `fa-hypertrophy-backup-${isoDate(new Date())}.json`;
+  const name = `far-hypertrophy-backup-${isoDate(new Date())}.json`;
   const file = new File([JSON.stringify(Store.exportBackup())], name, { type: "application/json" });
   if (navigator.canShare && navigator.canShare({ files: [file] })) {
     try { await navigator.share({ files: [file] }); return; } catch (e) { if (e.name === "AbortError") return; }
@@ -169,6 +177,7 @@ export async function handleImportFile(input) {
 export const MESO_EDIT_FIELD_MAP = {
   "edit-name": ["name", (v) => v],
   "edit-weeks": ["numWeeks", cleanCount],
+  "edit-cycle": ["cycleLength", (v) => v],
   "edit-start-date": ["startDate", (v) => v],
 };
 
@@ -198,7 +207,8 @@ export function handleSettingsAction(action, btn, view) {
     const numWeeks = cleanCount(view.querySelector('[data-role="new-meso-weeks"]').value || 6);
     const picked = view.querySelector('[data-role="new-meso-start-date"]').value;
     const startDate = isIsoDate(picked) ? picked : isoDate(new Date());
-    Store.createMesocycle({ name, numWeeks, startDate });
+    const cycle = view.querySelector('[data-role="new-meso-cycle"]').value.trim() || 7;
+    Store.createMesocycle({ name, numWeeks, startDate, cycleLength: cycle });
   } else if (action === "open-edit-exercise") {
     Object.assign(App.ui, { editExerciseOpen: btn.dataset.id, exerciseDraft: null, removeExerciseOpen: null, formError: null });
   } else if (action === "cancel-edit-exercise") {
@@ -251,11 +261,13 @@ export function handleSettingsChange(target) {
   const [field, parse] = mapping;
   // A cleared box is not saved (an empty start date would turn every day into
   // a rest day, an empty weeks box read as 1); it goes back to the stored value.
-  if (!target.value.trim()) { target.value = active[field]; return; }
+  if (!target.value.trim()) { target.value = field === "cycleLength" ? cycleLength(active) : active[field]; return; }
   // A date the schedule can't use (year 275760) is not saved either.
   if (field === "startDate" && !isIsoDate(target.value)) { target.value = active.startDate; return; }
-  Store.updateMesocycle(active.id, { [field]: parse(target.value) });
+  const saved = Store.updateMesocycle(active.id, { [field]: parse(target.value) });
   if (field === "numWeeks") target.value = parse(target.value);
+  // The store keeps a cycle in 1-14 and no shorter than its days: show what was saved.
+  if (field === "cycleLength") target.value = cycleLength(saved);
   if (target.dataset.role === "edit-start-date") {
     updateStartWeekdayHint(target, "edit-start-weekday-hint");
   }

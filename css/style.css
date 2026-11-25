@@ -452,7 +452,9 @@ label input, label select { margin-top: 4px; }
 
 /* A missed training day, offered on the viewed date. */
 .missed-card { border-color: color-mix(in srgb, var(--warn) 45%, var(--border)); }
-.missed-title { font-size: 17px; font-weight: 700; }
+.missed-title { font-size: 17px; font-weight: 700; color: var(--text); }
+/* "Pick back up from" is the select's label: the select keeps a control's own text. */
+.missed-title select { margin-top: 8px; font-weight: 400; }
 .missed-card .check-row { margin-top: 8px; }
 .missed-card .btn.wide { margin-top: 4px; }
 

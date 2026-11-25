@@ -1,7 +1,8 @@
-import { addDays, isIsoDate, isoDate, parseLocalDate, totalShiftDays } from "./schedule.js";
+import { MAX_CYCLE, addDays, cycleLength, getDayWeekdayOffset, isIsoDate, isoDate, parseLocalDate, totalShiftDays } from "./schedule.js";
 import { PROGRESSIONS } from "./progression.js";
 
-// localStorage-backed data access for FA-Hypertrophy.
+// localStorage-backed data access for FAR Hypertrophy (the keys and the
+// backup's app id keep the old name: stored data and old backups depend on them).
 // Keys: fah_exercises, fah_mesocycles, fah_workouts
 
 export const KEYS = {
@@ -49,6 +50,16 @@ export function writeJSON(key, value) {
 // would build that many set rows and overflow storage).
 export function cleanCount(v) {
   return Math.min(99, Math.max(1, Math.floor(Number(v)) || 1));
+}
+
+// A cycle's length in days: a whole number from 1 to MAX_CYCLE, and never
+// shorter than the days already placed in it (a day past the end would never
+// train). Not a number reads as 7, the weekly program.
+export function cleanCycleLength(v, days = []) {
+  // ceil: a hand-edited fractional `order` must not make the length a fraction (it would read as 7).
+  const used = Math.max(0, ...days.map((d) => Math.ceil(getDayWeekdayOffset(d)) + 1));
+  const n = Math.floor(Number(v));
+  return Math.min(MAX_CYCLE, Math.max(1, used, Number.isFinite(n) ? n : 7));
 }
 
 // Weight increment in percent: 0 to 50.
@@ -127,6 +138,7 @@ export function normalizeMesocycles(list) {
   };
   for (const meso of list) {
     set(meso, "numWeeks", cleanCount(meso.numWeeks));
+    if (meso.cycleLength != null) set(meso, "cycleLength", cleanCycleLength(meso.cycleLength, meso.days || []));
     // A start date Date cannot hold (a date input takes years up to 275760)
     // blanks every screen that shows it, with no way back in the app, and
     // one that is not a real padded date fails the backup check. One that
@@ -263,7 +275,7 @@ export const Store = {
   getActiveMesocycle() {
     return Store.getMesocycles().find((m) => m.active) || null;
   },
-  createMesocycle({ name, numWeeks, startDate }) {
+  createMesocycle({ name, numWeeks, startDate, cycleLength: length = 7 }) {
     const list = Store.getMesocycles();
     const meso = {
       id: uid(),
@@ -273,6 +285,9 @@ export const Store = {
       active: list.length === 0, // first mesocycle auto-activates; later ones don't
       days: [],
     };
+    // A weekly program has no cycleLength key, like every mesocycle made
+    // before the field existed.
+    if (cleanCycleLength(length) !== 7) meso.cycleLength = cleanCycleLength(length);
     list.push(meso);
     Store.saveMesocycles(list);
     return meso;
@@ -288,8 +303,10 @@ export const Store = {
     if (!meso) return null;
     // An unusable start date is ignored, like an empty one (see isIsoDate).
     // A new start keeps the shifts on or after it; earlier ones go.
-    const { startDate, ...rest } = updates;
+    // A cycle is never made shorter than the days placed in it.
+    const { startDate, cycleLength: length, ...rest } = updates;
     Object.assign(meso, rest);
+    if (length != null) meso.cycleLength = cleanCycleLength(length, meso.days);
     if (isIsoDate(startDate) && startDate !== meso.startDate) {
       meso.startDate = startDate;
       dropShiftsBefore(meso, startDate);
@@ -299,17 +316,19 @@ export const Store = {
   },
   // A new, inactive mesocycle with the same days and exercises (all new ids)
   // and no workouts — a starting point to adjust instead of rebuilding.
-  // Days are pinned to offsets from the start weekday, so the copy starts
+  // Days are pinned to offsets from the start date, so the copy starts
   // where the source's schedule would have gone on (its end, shifts
-  // included), moved on by whole weeks until it is not before today: every
-  // training day stays on the weekday it has now.
+  // included, rounded up to a whole cycle), moved on by whole cycles until it
+  // is not before today: every training day stays on the weekday it has now,
+  // and a 6-day or 8-day rotation goes on without a break in its order.
   cloneMesocycle(mesoId, todayIso) {
     const list = Store.getMesocycles();
     const source = list.find((m) => m.id === mesoId);
     if (!source) return null;
+    const cycle = cycleLength(source);
     const start = parseLocalDate(source.startDate);
-    start.setDate(start.getDate() + source.numWeeks * 7 + totalShiftDays(source));
-    while (isoDate(start) < todayIso) start.setDate(start.getDate() + 7);
+    start.setDate(start.getDate() + Math.ceil(source.numWeeks * 7 / cycle) * cycle + totalShiftDays(source));
+    while (isoDate(start) < todayIso) start.setDate(start.getDate() + cycle);
     const copy = {
       ...structuredClone(source),
       id: uid(),
@@ -518,11 +537,14 @@ export function validateBackup(data) {
   const num = (v) => typeof v === "number" && Number.isFinite(v);
   const optNum = (v) => v == null || num(v);
   const optBool = (v) => v == null || typeof v === "boolean";
-  const optOffset = (v) => v == null || (Number.isInteger(v) && v >= 0 && v <= 6);
+  // A day's offset in its cycle: 0-6 in a weekly program (no cycleLength
+  // key), else below the longest cycle (importing lengthens a cycle that is
+  // shorter than its days, see cleanCycleLength).
+  const optOffset = (v, cycle) => v == null || (Number.isInteger(v) && v >= 0 && v < (cycle == null ? 7 : MAX_CYCLE));
   const date = isIsoDate;
   const all = (list, test) => Array.isArray(list) && list.every((item) => isObj(item) && test(item));
 
-  if (!isObj(data) || data.app !== BACKUP_APP) return "This is not an FA Hypertrophy backup file.";
+  if (!isObj(data) || data.app !== BACKUP_APP) return "This is not a FAR Hypertrophy backup file.";
   if (data.version !== 1) return "This backup was made by a newer version of the app.";
 
   // Shifts: real dates not before the start, whole days 1-366, sorted and
@@ -535,8 +557,8 @@ export function validateBackup(data) {
   const exercisesOk = all(data.exercises, (e) => id(e.id) && str(e.name) && (e.muscleGroup == null || str(e.muscleGroup)) && optNum(e.minIncrement)
     && (e.note == null || (str(e.note) && e.note.length <= 200)));
   const mesocyclesOk = all(data.mesocycles, (m) =>
-    id(m.id) && str(m.name) && num(m.numWeeks) && date(m.startDate) && typeof m.active === "boolean" && shiftsOk(m.shifts, m.startDate)
-    && all(m.days, (d) => id(d.id) && str(d.name) && optOffset(d.weekdayOffset) && optNum(d.order)
+    id(m.id) && str(m.name) && num(m.numWeeks) && optNum(m.cycleLength) && date(m.startDate) && typeof m.active === "boolean" && shiftsOk(m.shifts, m.startDate)
+    && all(m.days, (d) => id(d.id) && str(d.name) && optOffset(d.weekdayOffset, m.cycleLength) && optNum(d.order)
       && all(d.exercises, (slot) => id(slot.id) && id(slot.exerciseId) && num(slot.order) && num(slot.targetSets)
         && num(slot.repRangeMin) && num(slot.repRangeMax) && optNum(slot.weightIncrementPct) && optProgression(slot.progression))));
   const workoutsOk = all(data.workouts, (w) =>

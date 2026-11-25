@@ -9,6 +9,13 @@ mesocycle-based workout program builder with built-in double-progression
 prefill. No RIR tracking, no volume-landmark dashboard — that was explicitly
 scoped out; see README.md for the feature list.
 
+The app is called FAR Hypertrophy (FA Hypertrophy up to version 41). Only
+the name people see changed (page title, manifest, Settings, the backup
+file's name and error text, the mark). The repository and its URL,
+`BACKUP_APP` (`"fa-hypertrophy"`), the `fa-hypertrophy-v*` cache names and
+the `fah_*` storage keys keep the old name on purpose: an installed app, its
+stored data and every backup made so far depend on them.
+
 Static PWA, zero dependencies, zero build step: plain HTML/CSS/vanilla JS +
 `localStorage`. The code is native ES modules loaded from one
 `<script type="module" src="js/main.js">`; there is no bundler and no
@@ -77,8 +84,8 @@ python -m http.server
 
 Then open the printed URL. There is no lint config. `node scripts/test.mjs`
 is a small self-check of the logic that needs no browser (history matching,
-double progression, weekday resolution and shifts, missed days, the pick
-among them and undo, the swipe rule,
+double progression, weekday resolution and shifts, cycles that are not a
+week long, missed days, the pick among them and undo, the swipe rule,
 reconciliation, PRs, library edits, copying a mesocycle, backup
 validation) plus the release checks: every loaded file is in `sw.js`'s
 `ASSETS`, `APP_VERSION` equals `CACHE_NAME`, and `sw.js` itself run against
@@ -198,15 +205,27 @@ at full opacity (above 4.5:1 on the input, and lighter in weight than a
 typed value); the outline of an empty control (unticked done circle, text
 box, select) is `--control-edge`, a neutral grey just above 3:1 on the card
 — `--muted` there made a column of empty circles louder than the numbers. The mark (a knight's helmet in
-black and white whose visor grill is the letters FA, with one accent: the
-right eye burns in mulberry, a near-white centre in the slit and a short
-ragged flame that ends just past the helmet's outline) is drawn by
+black and white, drawn from straight facets: a broad dome, a V-shaped sight
+that frowns, the letters FAR cut across the visor with the A on the centre
+seam, a jaw plate and a chin point, with one accent: the right eye burns in
+mulberry, a ragged flame that starts in the right half of the sight and ends
+past the helmet's outline) is drawn by
 `scripts/make_icons.py`, which writes `icons/icon.svg`, `icons/mark.svg`
 and the PNG sizes; change the mark there and re-run it rather than editing
-the outputs. The mark is curves and strokes, so the script renders the PNGs
+the outputs. The mark is polygons, strokes and the flame's curves, so the script renders the PNGs
 from the SVG with headless Chrome or Edge (no Pillow). The flame's rims are
 its outline stroked outward; its five colours run from `#7c2457` at the rim
-through `--accent` to near white.
+through `--accent` to near white. Version 42 redrew it for the new name (the
+user: "change the plate to read FAR", "Remove elements below the actual
+helmet", "potentially pivot it a more angular and aggressive angle"): the
+two neck plates are gone and nothing lies below the chin. What the drawing
+rounds taught, so they are not tried again: a sharp crest over straight
+flanks reads as a gem, two separate eye wedges read as a mask (one V sight
+with a rivet at each visor pivot reads as a helmet), a second colour or a
+dark half of the helmet vanishes into the icon's background at 180 px, and
+the letters need strokes about 21 wide to read at that size. Two other
+drawings (the old rounded helmet with FAR, and one with counterchanged
+halves) are kept as scripts in the git-ignored `wip-icon/far/`.
 
 ### Data model (`js/store.js`)
 
@@ -252,7 +271,9 @@ not clear the log when it frees space; a refusal changes nothing.
   future, since this *is* the template. An optional `shifts` array
   (`[{date, days}]`, see Shifts and missed workouts below) moves the
   schedule after a missed day; a mesocycle without the key behaves exactly
-  as before.
+  as before. An optional `cycleLength` (whole days, 1 to 14) is how long the
+  program takes to repeat; without the key it is 7, a weekly program (see
+  Scheduling below).
 - `fah_workouts` — append-only array of generated/logged workout instances,
   each tagged with `mesocycleId` and `dayId`. A workout with anything logged
   is never deleted, so history survives switching or archiving mesocycles
@@ -267,9 +288,12 @@ Day templates map onto literal weekdays. A mesocycle's start weekday is
 — there is deliberately no separate `startDayOfWeek` field to edit, so the
 two can never disagree (an earlier version had one; it was removed because a
 manually-set weekday could silently mismatch the real calendar date).
-`resolveDayForDate(mesocycle, date)` computes
-`offset = (weekday - mesocycleStartWeekday(mesocycle) + 7) % 7` and returns
-whichever day template's own `weekdayOffset` (0-6, set once at creation via
+`resolveDayForDate(mesocycle, date)` takes the date's offset in the cycle
+(`cycleOffset`: whole days since `startDate`, modulo the cycle's length; in
+a weekly program that is `(weekday - mesocycleStartWeekday(mesocycle) + 7)
+% 7`, and a test keeps that old formula as an oracle for every mesocycle
+without a `cycleLength`) and returns
+whichever day template's own `weekdayOffset` (0 to the cycle's length - 1, set once at creation via
 the "Trains on" picker in `#/program`'s add-day form, and never edited
 afterward — remove and re-add a day to change it) equals that offset, or
 `null` for a rest day if none does. Day templates don't need to occupy
@@ -286,6 +310,24 @@ reshuffles which weekday maps to which template, wrapping past Sunday back
 to Monday. This is why "finish workout" doesn't need to touch any schedule
 state.
 
+A program does not have to be a week long (the user: "Allow programs that
+don't span weeks neatly such as 8 day or 6 day on repeat"). `cycleLength(meso)`
+(`js/schedule.js`) is the one place that reads the mesocycle's `cycleLength`:
+a whole number from 1 to `MAX_CYCLE` (14), anything else or no key is 7. It
+is set in Settings ("Cycle length (days)", on create and on the active
+mesocycle) and goes through `cleanCycleLength` (`js/store.js`), which also
+never lets a cycle be shorter than the days placed in it (a day past the
+end would never train); the Settings box shows what was saved. Off 7 a day
+has no weekday: Program shows "Day k of n" and the next date it comes round
+(`nextDateOfOffset`) on the day card and in the "Trains on" picker, and
+`offsetWeekday` is used for a 7-day cycle only. What stays in calendar
+weeks whatever the cycle: `numWeeks`, `weekNumber` ("Week n of N"),
+`plannedEndIso`, the Monday-to-Sunday week strip, and the progression pace
+(`weekOf`). So in a cycle shorter than a week a day template can come round
+twice in one Monday-to-Sunday week, and the second time it has no units due
+(the same targets again): the pace is a weekly one by the user's design, and
+a test pins this.
+
 ### Shifts and missed workouts (`js/schedule.js`, `js/workout.js`)
 
 A missed training day can be done on a later day (the user's case: train
@@ -297,13 +339,18 @@ logged workout, gap day or made-up date (at most 366 days back), one entry
 per day template at its EARLIEST missed date, earliest first. The first
 entry is the default, so two missed sessions are resumed in program order.
 With more than one entry (the user's case: "I last didn't complete day 2 but
-took a week off and want to start on day 1 or day 3") the card shows a
-"Day to do" select and the user picks which day to resume with; the days
-missed before a later pick stay behind as they are. A day template with no
+took a week off and want to start on day 1 or day 3"; then "After at least 2
+training days were skipped call it pick back up from and select any missed
+day as start point") the card is titled "Pick back up from", which is the
+label of a select of the missed days, and the user picks which day to resume
+with; the days missed before a later pick stay behind as they are. A picked
+day is a start point, so in this form "Shift mesocycle to fit" starts ticked
+(Claude's reading of "start point", not the user's words); on a rest day it
+can be unticked for a one-off makeup. A day template with no
 missed date in that range is not offered (there is no shift backwards). The
 pick is kept in `App.ui.missedPick`, and choosing one patches the hint's
-day count in place (`handleMissedPick`: a re-render would untick the
-checkbox). `doMissedDay(meso, date, today, shift, pickIso)` does the picked
+day count in place (`handleMissedPick`: a re-render would put the checkbox
+back to its default). `doMissedDay(meso, date, today, shift, pickIso)` does the picked
 day (a `pickIso` that is not in the list does nothing) one of two ways,
 chosen by the card's "Shift mesocycle to fit" checkbox (it and the select
 are read when the button is clicked):
@@ -342,7 +389,10 @@ card and the Undo notice never show together. Editing the start date keeps
 the shifts, except those dated before the new start. A copy has no shifts
 and starts after the source's shifted end. `validateBackup` checks `shifts`
 (sorted, not overlapping, `days` a whole number from 1 to 366, none before
-`startDate`).
+`startDate`). It also checks each day's `weekdayOffset` against a cycle (a
+whole number, 0-6 without a `cycleLength`, 0-13 with one), while
+`cycleLength` itself only has to be a number: `normalizeMesocycles` brings
+it into 1-14 and lengthens it to hold its days on import and at startup.
 
 Late logging: a past day can be opened, completed and finished at any time.
 `refreshPredictions()` rebuilds the predictions of every unfinished
@@ -864,11 +914,13 @@ on every call; there is no separate app-state layer.
   re-render).
 - **Copy** (`Store.cloneMesocycle`): new ids for the mesocycle, its days and
   slots, inactive, no workouts, no shifts. Day templates are offsets from
-  the start weekday, so the copy starts where the source's schedule would
-  have gone on: at its shifted end (`startDate` + `numWeeks` weeks +
-  `totalShiftDays`), moved on by whole weeks until it is not before today.
-  That keeps every training day on the weekday it has now — the original's
-  weekdays when nothing was shifted, the shifted ones otherwise.
+  the start date, so the copy starts where the source's schedule would
+  have gone on: at its shifted end (`startDate` + `numWeeks` weeks, rounded
+  up to whole cycles, + `totalShiftDays`), moved on by whole cycles until it
+  is not before today. In a weekly program that keeps every training day on
+  the weekday it has now — the original's weekdays when nothing was shifted,
+  the shifted ones otherwise; in a 6-day or 8-day rotation it keeps the
+  order of the days unbroken. The copy keeps the `cycleLength`.
 - **Exercise library** (`#/settings`): `Store.updateExercise(id, {name,
   muscleGroup, note})` is the only way an exercise changes after creation.
   A rename also rewrites `exerciseName` in every workout entry of that id

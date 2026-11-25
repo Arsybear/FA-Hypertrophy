@@ -1,4 +1,4 @@
-# FA Hypertrophy
+# FAR Hypertrophy
 
 A free, barebones personal alternative to paid workout apps: a
 mesocycle-based training program tracker with built-in double-progression
@@ -7,7 +7,8 @@ prefill (no RIR tracking, no volume-landmark dashboard).
 ## Features
 
 - Mesocycles scheduled on literal days of the week, with rest days wherever
-  you leave a gap.
+  you leave a gap. A program can also repeat after any number of days from
+  1 to 14 (a 6-day or 8-day rotation) instead of every week.
 - Programmable training days: add and remove days, add, remove and reorder
   exercises, create new exercises, swap an exercise for one workout or for
   all future workouts of that day.
@@ -25,8 +26,8 @@ prefill (no RIR tracking, no volume-landmark dashboard).
   the next time you open the app).
 - Missed a day: do it on a later day, either as a one-off or with "Shift
   mesocycle to fit", which moves every later workout along with it. After
-  a longer break, pick which day of the program to resume with. Undo while
-  nothing is logged.
+  two or more missed days, "Pick back up from" lets you choose which missed
+  day to resume with. Undo while nothing is logged.
 - Swipe left or right to move between Today, Program, History and Settings;
   on the week strip to change the week, on the month calendar the month.
 - A summary of each finished workout, with weight and rep PR badges.

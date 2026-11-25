@@ -1,6 +1,6 @@
 {
-  "name": "FA Hypertrophy",
-  "short_name": "FA Hypertrophy",
+  "name": "FAR Hypertrophy",
+  "short_name": "FAR Hypertrophy",
   "description": "Personal mesocycle progression tracker",
   "start_url": "./index.html",
   "display": "standalone",
