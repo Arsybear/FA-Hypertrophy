@@ -226,10 +226,12 @@ slot outside the F, one under its arms and one outside the R. The A stands
 on the centre seam (the user: "splitting the a between the left and right
 halves"). A reader with no brief can take the two outer slots for an I
 ("IFARI"); they are kept because they are the grill, and the same drawing
-without the three short slots is kept beside it. The user turned down an
-angular redraw (version 42's, straight facets: "Option A"); it, the same
-helmet with FAR as a plain word, one with counterchanged halves and the
-letters-only grill are scripts in the git-ignored `wip-icon/far/`. What
+without the three short slots is kept beside it. Version 42 shipped an
+angular redraw (straight facets); the user turned it down for the rounded
+helmet, which the sheet they were sent called option A. The angular
+drawing, the rounded helmet with FAR as a plain word, one with
+counterchanged halves and the letters-only grill are scripts in the
+git-ignored `wip-icon/far/`. What
 those rounds taught: a sharp crest over straight flanks reads as a gem, two
 separate eye wedges as a mask, and a dark half of the helmet vanishes into
 the icon's background at 180 px.
