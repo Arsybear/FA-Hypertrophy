@@ -196,6 +196,14 @@ export const Store = {
   getExercises() {
     return readJSON(KEYS.exercises, []);
   },
+  // A blank install starts with the preset library (js/presets.js). Blank
+  // means none of the three keys was ever written: a library the user
+  // emptied ("[]"), unreadable data and any install with a program or a log
+  // are left as they are. Returns whether it wrote the library.
+  seedLibrary(presets) {
+    if (Object.values(KEYS).some((key) => localStorage.getItem(key) !== null)) return false;
+    return writeJSON(KEYS.exercises, presets.map((e) => ({ id: uid(), ...e })));
+  },
   addExercise(name, muscleGroup) {
     const exercises = Store.getExercises();
     const existing = exercises.find((e) => e.name.toLowerCase() === name.toLowerCase());

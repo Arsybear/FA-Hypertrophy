@@ -1,10 +1,11 @@
-const CACHE_NAME = "fa-hypertrophy-v43";
+const CACHE_NAME = "fa-hypertrophy-v44";
 const ASSETS = [
   "./",
   "index.html",
   "css/style.css",
   "js/main.js",
   "js/store.js",
+  "js/presets.js",
   "js/schedule.js",
   "js/progression.js",
   "js/ui.js",

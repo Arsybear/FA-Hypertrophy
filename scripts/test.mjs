@@ -1576,6 +1576,70 @@ assert.deepStrictEqual(loose.map((m) => m.cycleLength), [14, 6, 8, undefined]);
 assert.strictEqual(Store.importBackup(backupOf(mwf({ cycleLength: 3, days: dayAt(5) }))), true);
 assert.strictEqual(Store.getMesocycles()[0].cycleLength, 6);
 
+// --- The preset library of a blank install (Store.seedLibrary) ---
+{
+  const { PRESET_EXERCISES } = await import("../js/presets.js");
+  const { MUSCLE_GROUPS } = await import("../js/ui.js");
+  // The list: unique names ignoring case (history follows the name), a known
+  // muscle group, and a step that is stored as written.
+  const names = PRESET_EXERCISES.map((e) => e.name.toLowerCase());
+  assert.strictEqual(new Set(names).size, names.length);
+  assert.ok(PRESET_EXERCISES.length >= 40);
+  for (const e of PRESET_EXERCISES) {
+    assert.ok(e.name === e.name.trim() && e.name.length > 0 && e.name.length <= 60, e.name);
+    assert.ok(MUSCLE_GROUPS.includes(e.muscleGroup), e.name);
+    assert.ok(!("minIncrement" in e) || cleanMinIncrement(e.minIncrement) === e.minIncrement, e.name);
+    assert.deepStrictEqual(Object.keys(e).filter((k) => !["name", "muscleGroup", "minIncrement"].includes(k)), []);
+  }
+  // The call: once, at startup, before anything else reads or writes the store.
+  const mainSource = fs.readFileSync(path.join(root, "js/main.js"), "utf8");
+  assert.strictEqual(mainSource.split("seedLibrary(").length, 2);
+  assert.ok(mainSource.indexOf("Store.seedLibrary(PRESET_EXERCISES);") > 0);
+  assert.ok(mainSource.indexOf("Store.seedLibrary(PRESET_EXERCISES);") < mainSource.indexOf("Store.normalize();"));
+  const saved = new Map(memory);
+  // Not blank: any one of the three keys, an emptied library included.
+  for (const key of ["fah_exercises", "fah_mesocycles", "fah_workouts"]) {
+    memory.clear();
+    memory.set(key, "[]");
+    assert.strictEqual(Store.seedLibrary(PRESET_EXERCISES), false);
+    assert.deepStrictEqual([...memory], [[key, "[]"]]);
+  }
+  memory.clear();
+  memory.set("fah_exercises", "not json"); // unreadable data is not a blank install either
+  assert.strictEqual(Store.seedLibrary(PRESET_EXERCISES), false);
+  assert.strictEqual(memory.get("fah_exercises"), "not json");
+  // Blank: the library is written, with an id each, and nothing else.
+  memory.clear();
+  assert.strictEqual(Store.seedLibrary(PRESET_EXERCISES), true);
+  assert.deepStrictEqual([...memory.keys()], ["fah_exercises"]);
+  const seeded = Store.getExercises();
+  assert.deepStrictEqual(seeded.map(({ id, ...rest }) => rest), PRESET_EXERCISES);
+  assert.strictEqual(new Set(seeded.map((e) => e.id)).size, seeded.length);
+  assert.strictEqual(validateBackup(Store.exportBackup()), null);
+  Store.normalize();
+  assert.deepStrictEqual(Store.getExercises(), seeded); // nothing to clamp
+  // Once only: a second start changes nothing, and a removed exercise stays removed.
+  assert.strictEqual(Store.seedLibrary(PRESET_EXERCISES), false);
+  Store.removeExercise(seeded[0].id);
+  assert.strictEqual(Store.seedLibrary(PRESET_EXERCISES), false);
+  assert.strictEqual(Store.getExercises().length, seeded.length - 1);
+  // A seeded exercise is an ordinary one: typing its name again adds nothing.
+  assert.strictEqual(Store.addExercise("leg press", "Quads").id, seeded.find((e) => e.name === "Leg Press").id);
+  // Storage refuses the write: no library, and the failure is flagged.
+  memory.clear();
+  fullKey = "fah_exercises";
+  Store.writeFailed = false;
+  console.error = () => {}; // the failure is logged on purpose
+  assert.strictEqual(Store.seedLibrary(PRESET_EXERCISES), false);
+  console.error = realError;
+  assert.strictEqual(Store.writeFailed, true);
+  assert.deepStrictEqual(Store.getExercises(), []);
+  fullKey = null;
+  Store.writeFailed = false;
+  memory.clear();
+  for (const [k, v] of saved) memory.set(k, v);
+}
+
 // The version shown in Settings is the service worker cache version.
 assert.ok(fs.readFileSync(path.join(root, "sw.js"), "utf8").includes(`"fa-hypertrophy-v${APP_VERSION}"`), "APP_VERSION and CACHE_NAME differ");
 

@@ -35,6 +35,8 @@ prefill (no RIR tracking, no volume-landmark dashboard).
   volume charts.
 - Rename an exercise or change its muscle group (its history follows), and
   keep a note per exercise.
+- A new install starts with a library of common exercises, each with a
+  muscle group and a usual minimum weight step; edit or remove any of them.
 - Copy a mesocycle as the starting point for the next one.
 - Export and import a backup file.
 - Works offline once loaded; all data stays in the browser.

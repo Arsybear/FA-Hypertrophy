@@ -86,8 +86,8 @@ Then open the printed URL. There is no lint config. `node scripts/test.mjs`
 is a small self-check of the logic that needs no browser (history matching,
 double progression, weekday resolution and shifts, cycles that are not a
 week long, missed days, the pick among them and undo, the swipe rule,
-reconciliation, PRs, library edits, copying a mesocycle, backup
-validation) plus the release checks: every loaded file is in `sw.js`'s
+reconciliation, PRs, library edits, the preset library of a blank install,
+copying a mesocycle, backup validation) plus the release checks: every loaded file is in `sw.js`'s
 `ASSETS`, `APP_VERSION` equals `CACHE_NAME`, and `sw.js` itself run against
 fakes of the cache and the network (install, cache-first fetch, the refill
 of a lost cache, activate). Run it before committing. Everything else is
@@ -160,6 +160,8 @@ never interrupts someone mid-workout on `#/today`.
   listeners, registers the service worker.
 - `store.js` — `Store` (all `localStorage` access), `validateBackup`, and
   the number clamps (`cleanCount`, `cleanPct`, `normalizeMesocycles`).
+- `presets.js` — `PRESET_EXERCISES`, the exercise library a blank install
+  starts with (pure data; see Data model).
 - `schedule.js` — dates, weekday-to-day-template resolution including
   shifts, and the one date format shown everywhere (`formatDay`,
   `formatShortDate`).
@@ -250,6 +252,18 @@ not clear the log when it frees space; a refusal changes nothing.
   entries created before this field existed). Set at creation via
   `Store.addExercise(name, muscleGroup)` and changed afterwards only through
   `Store.updateExercise` (see Exercise library below).
+  A blank install does not start empty (the user: "right now the app ships
+  empty with no exercises preloaded and every exercise is custom made"):
+  `Store.seedLibrary(PRESET_EXERCISES)` runs once at startup, before
+  `Store.normalize()`, and writes the preset library (`js/presets.js`:
+  common lifts, each with a muscle group and a `minIncrement` by equipment)
+  only when none of the three keys was ever written. A library the user
+  emptied (`[]`), unreadable data and every install with a program or a
+  log are left alone, so an update never adds exercises to an app that is
+  in use. A seeded exercise is an ordinary library entry (edit, remove,
+  backup). The list and its steps are a draft the user has not confirmed;
+  sets, rep range and progression stay settings of a program slot, and the
+  preset carries none.
   Weight units are pounds throughout the UI; nothing in the data model is
   unit-typed, it's just a number. An exercise also carries an optional
   `minIncrement` (lb): the smallest weight step its equipment allows (5 for
