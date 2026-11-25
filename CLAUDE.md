@@ -221,22 +221,29 @@ elements below the actual helmet"): the two neck plates are gone, nothing
 lies below the chin, and the helmet is enlarged into the room they left.
 The letters are slots of the grill, cut as the first mark's F and A were
 (the user, on seeing FAR set as a plain word: "integrate the lettering into
-the grille in a similar manner to old"): round-ended slots that hang from
-one line under the eye slit and end along the chin's curve, so the F is
-shorter than the A and the R's leg ends above its stem's foot, with a short
-slot outside the F, one under its arms and one outside the R. The A stands
-on the centre seam (the user: "splitting the a between the left and right
-halves"). A reader with no brief can take the two outer slots for an I
-("IFARI"); they are kept because they are the grill, and the same drawing
-without the three short slots is kept beside it. Version 42 shipped an
+the grille in a similar manner to old"): round-ended slots 12 wide on even
+columns, hanging from one line under the eye slit, every foot on one curve
+inside the chin's edge. Left to right: a short bar, the F with the bar
+under its arms, a tall plain bar, the A, a tall plain bar, the R with its
+leg under the bowl, a short bar. The A stands on the centre seam (the user:
+"splitting the a between the left and right halves"). This is step S2 of a
+sheet of five the user asked for ("1 but more subtle in the integration of
+the letters, give me a spectrum of reads as high quality to grille to
+clearly reads as letters"; then "S2 for icon"), from S1 (twelve even bars,
+the letters only light strokes) to S5 (the letters alone). Version 43 was
+S4 of that sheet: strokes 16 wide and no tall plain bars, which read as a
+word stamped on the plate with its outer slots as quote marks. The price
+of S2, known when it was chosen: a reader with no brief can take the tall
+plain bars for the letter I ("FIAIR", "IFARI"). Version 42 shipped an
 angular redraw (straight facets); the user turned it down for the rounded
-helmet, which the sheet they were sent called option A. The angular
-drawing, the rounded helmet with FAR as a plain word, one with
-counterchanged halves and the letters-only grill are scripts in the
-git-ignored `wip-icon/far/`. What
-those rounds taught: a sharp crest over straight flanks reads as a gem, two
-separate eye wedges as a mask, and a dark half of the helmet vanishes into
-the icon's background at 180 px.
+helmet. The other steps and their generators (`spectrum.py`,
+`spectrum_s1.py`), the angular drawing, the helmet with FAR as a plain word
+and one with counterchanged halves are in the git-ignored `wip-icon/far/`.
+What those rounds taught: a sharp crest over straight flanks reads as a
+gem, two separate eye wedges as a mask, a dark half of the helmet vanishes
+into the icon's background at 180 px, and at the first mark's pixel weight
+ten to twelve grill columns fit this helmet (an earlier note that three
+letters left no room for plain bars was wrong).
 
 ### Data model (`js/store.js`)
 
@@ -261,9 +268,11 @@ not clear the log when it frees space; a refusal changes nothing.
   emptied (`[]`), unreadable data and every install with a program or a
   log are left alone, so an update never adds exercises to an app that is
   in use. A seeded exercise is an ordinary library entry (edit, remove,
-  backup). The list and its steps are a draft the user has not confirmed;
-  sets, rep range and progression stay settings of a program slot, and the
-  preset carries none.
+  backup). The list and its steps are Claude's draft, shipped on the
+  user's "push" with one value of theirs ("reverse pec dec min step 5");
+  the other steps are the usual ones by equipment, not confirmed one by
+  one. Sets, rep range and progression stay settings of a program slot,
+  and the preset carries none.
   Weight units are pounds throughout the UI; nothing in the data model is
   unit-typed, it's just a number. An exercise also carries an optional
   `minIncrement` (lb): the smallest weight step its equipment allows (5 for

@@ -8,9 +8,10 @@
 // by equipment: 5 for a barbell, an EZ-bar and a Smith machine (a 2.5 lb
 // plate on each side), 5 for dumbbells (a dumbbell lift is logged as the
 // weight of one dumbbell), 5 for a cable, 10 for a machine with a weight
-// stack or loaded with 5 lb plates on both sides, 5 for one loaded at one
-// end only, and none for a bodyweight lift (the 2.5 default applies once
-// weight is added). A name says which equipment its step is for. Names are
+// stack or loaded with 5 lb plates on both sides (the reverse pec deck is 5,
+// the owner's value), 5 for one loaded at one end only, and none for a
+// bodyweight lift (the 2.5 default applies once weight is added). A name
+// says which equipment its step is for. Names are
 // unique ignoring case (history follows the name), and each group's lifts
 // are listed compound first: the pickers keep this order inside a muscle
 // group. There is no group for traps, forearms or adductors: shrugs are
@@ -48,7 +49,7 @@ export const PRESET_EXERCISES = [
   ["Dumbbell Lateral Raise", "Shoulders", DUMBBELL],
   ["Cable Lateral Raise", "Shoulders", CABLE],
   ["Dumbbell Rear Delt Fly", "Shoulders", DUMBBELL],
-  ["Reverse Pec Deck", "Shoulders", MACHINE],
+  ["Reverse Pec Deck", "Shoulders", 5], // the owner's value: this stack moves in 5s
   ["Face Pull", "Shoulders", CABLE],
 
   ["Barbell Curl", "Biceps", BAR],

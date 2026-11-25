@@ -30,28 +30,30 @@ RIVETS = [(135, 244), (377, 244)]
 
 # ---- face: the eye slit and the grill, whose slots are the letters F A R ---
 # Drawn in its own coordinates and placed in the visor by FACE (slit 153..359,
-# clear of the rivets; its top corners on y 232). The grill is cut as the
-# first mark's was: round-ended slots 14 wide that hang from one line under
-# the slit and end along the chin's curve, so the F on the left is shorter
-# than the A in the middle, and the R's leg ends above its stem's foot. The
-# letters are slots of that grill, not a word set on the plate: a short slot
-# stands outside the F, one under the F's arms and one outside the R, as the
-# first grill had. The A stands on the centre seam, symmetric about x 256,
-# the ridge above it ending in the slit and the one below starting under it.
-# GRILL enlarges the grill about the middle of its top line: at the first
-# mark's size the letters were too small to read at 180 px in this larger
-# helmet.
+# clear of the rivets; its top corners on y 232). The grill is cut in the
+# first mark's manner: round-ended slots 12 wide that hang from one line
+# (y 285) under the slit, on columns 21.6 apart mirrored about the centre
+# seam, each foot on one curve 23 inside the visor's chin edge and none
+# lower than y 376. Left to right: a short bar, the F's stem, the bar under
+# the F's arms, a tall plain bar, the A (its point on the seam, its feet 19
+# to either side), a tall plain bar, the R's stem, the R's leg under its
+# bowl, a short bar. The letters are slots among plain slots, not a word set
+# on the plate; the price is that a reader with no brief can take the tall
+# plain bars for the letter I ("FIAIR"). In this helmet (HELMET enlarges it
+# by 1.215) a pitch of 21.6 and a width of 12 are about the first mark's 26
+# and 14 in pixels.
 FACE = "translate(20.48 17.732) scale(0.92)"
 SLIT = "M144,242.7 L178,232.9 L256,239 L334,232.9 L368,242.7 L334,257.9 L256,264 L178,257.9 Z"
-GRILL = "translate(256 285) scale(1.15) translate(-256 -280.5)"
-SLOTS = ["M163,280.5 L163,300",                                                # a short slot, outside the F
-         "M185,347 L185,280.5 L216,280.5", "M185,308 L209,308",                # F
-         "M211,337 L211,360",                                                  # a short slot under the F's arms
-         "M233,366.4 L256,280.5 L279,366.4",                                   # A, on the seam
-         "M300,360 L300,280.5 L310,280.5 A16.5,16.5 0 0 1 310,313.5 L300,313.5",   # R: stem and bowl
-         "M309,313.5 L330,337",                                                # R: the leg
-         "M349,280.5 L349,300"]                                                # a short slot, outside the R
-A_BAR = "M243,333 L269,333 L272,343 L240,343 Z"              # low, or the A reads as a lambda
+SLOTS = ["M148,285 L148,315.9",                                                # a short bar, outside the F
+         "M169.6,345.9 L169.6,285 L191.2,285", "M169.6,310 L188,310",          # F
+         "M191.2,331.5 L191.2,367.7",                                          # the bar under the F's arms
+         "M212.8,285 L212.8,376",                                              # a tall plain bar
+         "M237,376 L256,285 L275,376",                                         # A, on the seam
+         "M299.2,285 L299.2,376",                                              # a tall plain bar
+         "M320.8,367.7 L320.8,285 L329.9,285 A12.5,12.5 0 0 1 329.9,310 L320.8,310",   # R: stem and bowl
+         "M331.6,310 L345.4,342.3",                                            # R: the leg
+         "M364,285 L364,315.9"]                                                # a short bar, outside the R
+A_BAR = "M244.6,339.6 L267.4,339.6 L269.5,349.6 L242.5,349.6 Z"   # low, or the A reads as a lambda
 
 # ---- the burning right eye (helmet coordinates, drawn over the face) -------
 # Inside HELMET, so it moves and scales with the slit it sits in.
@@ -89,11 +91,8 @@ def mark():
         paths(RIDGES, f'fill="{K}"'),
         "".join(f'<circle cx="{x}" cy="{y}" r="7" fill="{K}"/>' for x, y in RIVETS),
         f'<g transform="{FACE}">',
-        paths([SLIT], f'fill="{K}"'),
-        f'<g transform="{GRILL}">',
-        paths([A_BAR], f'fill="{K}"'),
-        paths(SLOTS, f'fill="none" stroke="{K}" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"'),
-        "</g>",
+        paths([SLIT, A_BAR], f'fill="{K}"'),
+        paths(SLOTS, f'fill="none" stroke="{K}" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"'),
         "</g>",
         rim(DARK, 10, 5), rim(MAIN, 5, 2.4),
         paths([FLAME] + EMBERS, f'fill="{SOFT}"'), paths([CORE], f'fill="{HOT}"'), paths([CENTRE], f'fill="{WHITE}"'),
